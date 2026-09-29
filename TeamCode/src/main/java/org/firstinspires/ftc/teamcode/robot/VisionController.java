@@ -39,4 +39,10 @@ public class VisionController {
         return visionPortal;
     }
 
+    public void stop() {
+        if (visionPortal != null) {
+            visionPortal.close();
+        }
+    }
+
 }

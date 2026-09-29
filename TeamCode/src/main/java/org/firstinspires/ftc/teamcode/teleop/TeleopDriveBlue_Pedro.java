@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.teamcode.field.Blue;
+import org.firstinspires.ftc.teamcode.pedro.Constants;
 
 @TeleOp(name = "TeleopBlue_Pedro", group = "Test")
 public class TeleopDriveBlue_Pedro extends OpMode {
@@ -15,7 +16,8 @@ public class TeleopDriveBlue_Pedro extends OpMode {
 
     @Override
     public void init() {
-
+        follower = Constants.create(hardwareMap);
+        //follower.setStartingPose(startingPose);
     }
 
     @Override

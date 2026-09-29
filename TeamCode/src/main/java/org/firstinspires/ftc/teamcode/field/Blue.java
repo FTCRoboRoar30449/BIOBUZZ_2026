@@ -9,6 +9,7 @@ public class Blue {
     public static final Pose AUTO_PARK_POSE = new Pose(0, 0, Math.toRadians(0));
 
     // Teleop
+    // teleopStart will be updated when Auto stops
     public static Pose teleopStart = new Pose(0, 0,Math.toRadians(0));
     public static final Pose TELEOP_PARK_POSE = new Pose(0, 0, Math.toRadians(0));
 

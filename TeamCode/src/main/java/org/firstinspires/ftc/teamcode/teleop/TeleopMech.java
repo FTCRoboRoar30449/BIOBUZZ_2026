@@ -54,8 +54,6 @@ public class TeleopMech extends OpMode {
 
     @Override
     public void stop() {
-        if (visionPortal != null) {
-            visionPortal.close();
-        }
+        visionController.stop();
     }
 }
