@@ -14,10 +14,21 @@ public class MechController {
     private MechState previousState = MechState.IDLE;
 
     // Hardware constants
+    public final int MAX_CONVEYOR_ROTATION = 60;
+
 
     // Limit constants
+    public final int CONVEYOR_UP_NECTAR = 60; // angle of servo when nectar conveyor bed is up
+    public final int CONVEYOR_DOWN_NECTAR = 45; // angle of servo when nectar conveyor bed is down
+    public final int CONVEYOR_UP_POLLEN = 45; // angle of servo when pollen conveyor bed is up
+    public final int CONVEYOR_DOWN_POLLEN = 90; // angle of servo when pollen conveyor bed is down
 
     // Variables
+    public int countNectar = 0; // count of nectar in the robot
+    public int countPollen = 4; // count of pollen in the robot
+    public int lastConveyorNectar = 1; // state of nectar bed
+    public int lastConveyorPollen = 1; // state of pollen bed
+
 
     // Constructor
     public MechController(RobotHardware RoboRoar, VisionController visionController) {
@@ -52,6 +63,10 @@ public class MechController {
 
             case INTAKE_FIELD:
                 currentState = MechState.INTAKE_FIELD;
+                if (countPollen + countNectar < 4) {
+                    conveyorNectar(1);
+                    conveyorPollen(1);
+                }
                 break;
 
             case INTAKE_FLOWER:
@@ -74,6 +89,31 @@ public class MechController {
     public void update() {
         handleMechState(this.currentState);
     }
+
+    public void conveyorNectar(int up1dn0){
+        if (lastConveyorNectar != up1dn0) {
+            if (up1dn0 == 1){
+                robot.conveyorNectar.setPosition(CONVEYOR_UP_NECTAR / MAX_CONVEYOR_ROTATION);
+                lastConveyorNectar = 1;
+            } else {
+                robot.conveyorNectar.setPosition(CONVEYOR_DOWN_NECTAR / MAX_CONVEYOR_ROTATION);
+                lastConveyorNectar = 0;
+            }
+        }
+    }
+
+    public void conveyorPollen(int up1dn0){
+        if (lastConveyorPollen != up1dn0) {
+            if (up1dn0 == 1){
+                robot.conveyorPollen.setPosition(CONVEYOR_UP_POLLEN / MAX_CONVEYOR_ROTATION);
+                lastConveyorPollen = 1;
+            } else {
+                robot.conveyorPollen.setPosition(CONVEYOR_DOWN_POLLEN / MAX_CONVEYOR_ROTATION);
+                lastConveyorPollen = 0;
+            }
+        }
+    }
+
 
     // Telemetry output
     public void allTelemetry() {
