@@ -37,6 +37,34 @@ public class MechController {
             case IDLE:
                 currentState = MechState.IDLE;
                 break;
+
+            case SHOOTING_HIVE:
+                currentState = MechState.SHOOTING_HIVE;
+                break;
+
+            case SHOOTING_FLOWER_NECTAR:
+                currentState = MechState.SHOOTING_FLOWER_NECTAR;
+                break;
+
+            case SHOOTING_FLOWER_POLLEN:
+                currentState = MechState.SHOOTING_FLOWER_POLLEN;
+                break;
+
+            case INTAKE_FIELD:
+                currentState = MechState.INTAKE_FIELD;
+                break;
+
+            case INTAKE_FLOWER:
+                currentState = MechState.INTAKE_FLOWER;
+                break;
+
+            case INTAKE_FLOWER_SHOOT_HIVE:
+                currentState = MechState.INTAKE_FLOWER_SHOOT_HIVE;
+                break;
+
+            case INTAKE_FLOWER_SHOOT_FLOWER:
+                currentState = MechState.INTAKE_FLOWER_SHOOT_FLOWER;
+                break;
         }
     }
 
