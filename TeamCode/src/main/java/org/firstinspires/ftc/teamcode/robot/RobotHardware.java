@@ -1,9 +1,11 @@
 package org.firstinspires.ftc.teamcode.robot;
 
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
@@ -17,13 +19,16 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
 public class RobotHardware {
     public final DcMotor intakeMot;
-    public final DcMotorEx shootingMot;
-    public final Servo indexer, lifter;
+    public final DcMotor coveyorMot;
+    public final DcMotorEx nectarShootingMot;
+    public final DcMotorEx pollenShootingMot;
+    public final Servo turretRot, flowerIntake, conveyorPollen, conveyorNectar, hoodPollen, hoodNectar;
     public final GoBildaPinpointDriver pinpoint;
     public final IMU imu;
     public final Telemetry telemetry;
-    public final RevColorSensorV3 sensorR, sensorL;
+    public final RevColorSensorV3 sensorIntake, sensorNectar, sensorPollen;
     public final WebcamName camera;
+    public final Limelight3A limeLight;
     private final HardwareMap hwMap;
 
     double kP = 65.0;
@@ -50,22 +55,32 @@ public class RobotHardware {
         this.hwMap = hwMap;
         this.telemetry = telemetry;
 
-        shootingMot = hwMap.get(DcMotorEx.class, "shootingMot"); // E?
+        coveyorMot = hwMap.get(DcMotor.class, "coveyorMot"); // E?
         intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E?
+        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E?
+        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // E?
+
         // LFMotor C?
         // LBMotor C?
         // RFMotor E?
         // RBMotor E?
 
-        indexer = hwMap.get(Servo.class, "indexer"); // E?
-        lifter = hwMap.get(Servo.class, "lifter"); // C?
+        turretRot = hwMap.get(Servo.class, "turretRot"); // E?
+        flowerIntake = hwMap.get(Servo.class, "flowerIntake"); // C?
+        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen"); // C?
+        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar"); // C?
+        hoodPollen = hwMap.get(Servo.class, "hoodPollen"); // C?
+        hoodNectar = hwMap.get(Servo.class, "hoodNectar"); // C?
+
 
         pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); //CI2C ?
         imu = hwMap.get(IMU.class, "imu"); //CI2C0
 
-        sensorL = hwMap.get(RevColorSensorV3.class, "sensorL"); // EI2C ?
-        sensorR = hwMap.get(RevColorSensorV3.class, "sensorR"); // EI2C ?
+        sensorIntake = hwMap.get(RevColorSensorV3.class, "sensorIntake"); // EI2C ?
+        sensorNectar = hwMap.get(RevColorSensorV3.class, "sensorNectar"); // EI2C ?
+        sensorPollen = hwMap.get(RevColorSensorV3.class, "sensorPollen"); // EI2C ?
         camera = hwMap.get(WebcamName.class, "Webcam 1");
+        limeLight = hwMap.get(Limelight3A.class, "limeLight");
 
         setMotorDirections();
     }
@@ -75,9 +90,20 @@ public class RobotHardware {
         intakeMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         intakeMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         intakeMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
-        shootingMot.setDirection(DcMotorEx.Direction.FORWARD);
-        shootingMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        shootingMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        shootingMot.setVelocityPIDFCoefficients(kP, kI, kD, kF);
+
+        coveyorMot.setDirection(DcMotor.Direction.REVERSE);
+        coveyorMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        coveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        coveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        nectarShootingMot.setDirection(DcMotorEx.Direction.REVERSE);
+        nectarShootingMot.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
+        nectarShootingMot.setMode(DcMotorEx.RunMode.RUN_USING_ENCODER);
+        nectarShootingMot.setVelocityPIDFCoefficients(kP, kI, kD, kF);
+
+        pollenShootingMot.setDirection(DcMotorEx.Direction.REVERSE);
+        pollenShootingMot.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);
+        pollenShootingMot.setMode(DcMotorEx.RunMode.RUN_USING_ENCODER);
+        pollenShootingMot.setVelocityPIDFCoefficients(kP, kI, kD, kF);
     }
 }
