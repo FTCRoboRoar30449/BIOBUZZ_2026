@@ -5,7 +5,6 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
@@ -26,7 +25,7 @@ public class RobotHardware {
     public final GoBildaPinpointDriver pinpoint;
     public final IMU imu;
     public final Telemetry telemetry;
-    public final RevColorSensorV3 sensorIntake, sensorNectar, sensorPollen;
+    public final RevColorSensorV3 sensorIntakeU, sensorIntakeD, sensorNectarL, sensorNectarR, sensorPollenL, sensorPollenR;
     public final WebcamName camera;
     public final Limelight3A limeLight;
     private final HardwareMap hwMap;
@@ -76,9 +75,12 @@ public class RobotHardware {
         pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); //CI2C ?
         imu = hwMap.get(IMU.class, "imu"); //CI2C0
 
-        sensorIntake = hwMap.get(RevColorSensorV3.class, "sensorIntake"); // EI2C ?
-        sensorNectar = hwMap.get(RevColorSensorV3.class, "sensorNectar"); // EI2C ?
-        sensorPollen = hwMap.get(RevColorSensorV3.class, "sensorPollen"); // EI2C ?
+        sensorIntakeU = hwMap.get(RevColorSensorV3.class, "sensorIntakeU"); // EI2C ?
+        sensorIntakeD = hwMap.get(RevColorSensorV3.class, "sensorIntakeD"); // EI2C ?
+        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL"); // EI2C ?
+        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR"); // EI2C ?
+        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL"); // EI2C ?
+        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR"); // EI2C ?
         camera = hwMap.get(WebcamName.class, "Webcam 1");
         limeLight = hwMap.get(Limelight3A.class, "limeLight");
 

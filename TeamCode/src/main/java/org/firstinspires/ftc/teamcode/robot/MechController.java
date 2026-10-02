@@ -66,6 +66,8 @@ public class MechController {
                 if (countPollen + countNectar < 4) {
                     conveyorNectar(1);
                     conveyorPollen(1);
+                    robot.intakeMot.setPower(1);
+
                 }
                 break;
 
