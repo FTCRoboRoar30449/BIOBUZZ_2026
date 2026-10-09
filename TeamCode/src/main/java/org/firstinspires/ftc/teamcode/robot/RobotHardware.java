@@ -18,7 +18,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
 public class RobotHardware {
     public final DcMotor intakeMot;
-    public final DcMotor coveyorMot;
+    public final DcMotor conveyorMot;
     public final DcMotorEx nectarShootingMot;
     public final DcMotorEx pollenShootingMot;
     public final Servo turretRot, flowerIntake, conveyorPollen, conveyorNectar, hoodPollen, hoodNectar;
@@ -54,7 +54,7 @@ public class RobotHardware {
         this.hwMap = hwMap;
         this.telemetry = telemetry;
 
-        coveyorMot = hwMap.get(DcMotor.class, "coveyorMot"); // E?
+        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot"); // E?
         intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E?
         nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E?
         pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // E?
@@ -93,10 +93,10 @@ public class RobotHardware {
         intakeMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         intakeMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        coveyorMot.setDirection(DcMotor.Direction.REVERSE);
-        coveyorMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        coveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        coveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        conveyorMot.setDirection(DcMotor.Direction.REVERSE);
+        conveyorMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        conveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         nectarShootingMot.setDirection(DcMotorEx.Direction.REVERSE);
         nectarShootingMot.setMode(DcMotorEx.RunMode.STOP_AND_RESET_ENCODER);

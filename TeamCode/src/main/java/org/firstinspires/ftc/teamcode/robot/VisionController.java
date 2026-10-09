@@ -54,10 +54,10 @@ public class VisionController {
         }
     }
 
-    public int ballColor() {
+    public int ballColor(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
         return isFinalColor(
-                isColor(robot.sensorIntakeU),
-                isColor(robot.sensorIntakeD)
+                isColor(sensorL),
+                isColor(sensorR)
         );
     }
 
@@ -86,7 +86,7 @@ public class VisionController {
         }
 
         // Nectar
-        else if (distance < distanceNectar) {
+        else if (distance <= distanceNectar) {
 
             float[] hsvValues = new float[3];
 
@@ -95,12 +95,11 @@ public class VisionController {
             int b = colorSensor.blue();
 
             // Scale RGB to 0–255 and convert to HSV
-            Color.RGBToHSV(
-                    r * 255 / 800,
-                    g * 255 / 800,
-                    b * 255 / 800,
-                    hsvValues
-            );
+            int red = Math.max(0, Math.min(255, r * 255 / 800));
+            int green = Math.max(0, Math.min(255, g * 255 / 800));
+            int blue = Math.max(0, Math.min(255, b * 255 / 800));
+
+            Color.RGBToHSV(red, green, blue, hsvValues);
 
             float hue = hsvValues[0];
             float sat = hsvValues[1];
