@@ -60,7 +60,7 @@ public class AutoRedS1 extends OpMode {
                 .linear(shootOne.heading(), intakePose.heading());
         driveInpIn = new AtomicPath(new Line(intakePose, intakeAction ))
                 .linear(intakePose.heading(),intakeAction.heading());
-        driveInSh2 = new AtomicPath(new BezierCurve(intakeAction, shootTwo))
+        driveInSh2 = new AtomicPath(new BezierCurve(intakeAction, controlPoint, shootTwo))
                 .linear(intakeAction.heading(), shootTwo.heading());
         driveSh2Ep = new AtomicPath(new Line(shootTwo, endPoint))
                 .linear(shootTwo.heading(),endPoint.heading());
