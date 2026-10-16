@@ -68,6 +68,10 @@ public class MechController {
         this.visionController = visionController;
         this.currentState = MechState.IDLE;
     }
+    // Start limelight
+    public void initLimelight() {
+        visionController.initLimelight();
+    }
 
     // State machine handler
     public void handleMechState(MechState state) {

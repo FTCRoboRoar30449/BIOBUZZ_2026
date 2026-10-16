@@ -54,6 +54,16 @@ public class VisionController {
         }
     }
 
+    // Start Limelight
+    public void initLimelight() {
+        robot.limeLight.pipelineSwitch(0);
+        robot.limeLight.start();
+    }
+
+    // Stop Limelight
+    public void stopLimelight() {
+        robot.limeLight.stop();
+    }
     public int ballColor(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
         return isFinalColor(
                 isColor(sensorL),
