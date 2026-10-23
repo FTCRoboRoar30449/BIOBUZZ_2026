@@ -220,6 +220,9 @@ public class MechController {
     private void updateFlowerIntake() {
         if (countPollen + countNectar >= 4) {
             robot.intakeMot.setPower(0);
+            robot.conveyorMot.setPower(0);
+
+            robot.flowerIntake.setPosition(0);
             return;
         }
 
@@ -227,8 +230,8 @@ public class MechController {
         conveyorPollen(1);
 
         int ballColor = visionController.ballColor(
-                robot.sensorIntakeU,
-                robot.sensorIntakeD
+                robot.sensorIntakeR,
+                robot.sensorIntakeL
         );
 
         if (ballColor == 2 || ballColor == 3) {
