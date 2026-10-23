@@ -105,6 +105,7 @@ public class MechController {
 
             case INTAKE_FLOWER:
                 currentState = MechState.INTAKE_FLOWER;
+                updateFlowerIntake();
                 break;
 
             case INTAKE_FLOWER_SHOOT_HIVE:
@@ -214,7 +215,32 @@ public class MechController {
 
         previousIntakeColor = ballColor;
     }
+    private void updateFlowerIntake() {
+        if (countPollen + countNectar >= 4) {
+            robot.intakeMot.setPower(0);
+            return;
+        }
 
+        conveyorNectar(0);
+        conveyorPollen(1);
+
+        int ballColor = visionController.ballColor(
+                robot.sensorIntakeU,
+                robot.sensorIntakeD
+        );
+
+        if (ballColor == 2 || ballColor == 3) {
+            robot.intakeMot.setPower(-1);
+        } else {
+            robot.intakeMot.setPower(1);
+
+            if (ballColor == 1 && previousIntakeColor == 0) {
+                countPollen++;
+            }
+        }
+
+        previousIntakeColor = ballColor;
+    }
     // Set nectar conveyor bed
     // 1 = up, 0 = down
     public void conveyorNectar(int up1dn0) {
