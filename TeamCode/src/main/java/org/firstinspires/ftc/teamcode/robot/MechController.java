@@ -227,8 +227,8 @@ public class MechController {
         conveyorPollen(1);
 
         int ballColor = visionController.ballColor(
-                robot.sensorIntakeU,
-                robot.sensorIntakeD
+                robot.sensorIntakeR,
+                robot.sensorIntakeL
         );
 
         if (ballColor == 2 || ballColor == 3) {
