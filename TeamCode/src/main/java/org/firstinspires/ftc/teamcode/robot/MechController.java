@@ -39,7 +39,7 @@ public class MechController {
 
     // Ball counts
     public int countNectar = 0;
-    public int countPollen = 4;
+    public int countPollen = 0;
 
     // Initial servo states
     public int lastConveyorNectar = -1;
@@ -68,10 +68,6 @@ public class MechController {
         this.visionController = visionController;
         this.currentState = MechState.IDLE;
     }
-    // Start limelight
-    public void initLimelight() {
-        visionController.initLimelight();
-    }
 
     // State machine handler
     public void handleMechState(MechState state) {
@@ -84,6 +80,9 @@ public class MechController {
 
             case IDLE:
                 currentState = MechState.IDLE;
+
+                robot.intakeMot.setPower(0);
+                robot.conveyorMot.setPower(0);
                 break;
 
             case SHOOTING_HIVE:
@@ -130,6 +129,9 @@ public class MechController {
         }
     }
 
+    // Cleanup State
+
+
     // Field intake and wrong-ball rejection
     private void updateFieldIntake() {
 
@@ -149,8 +151,8 @@ public class MechController {
         conveyorPollen(1);
 
         int ballColor = visionController.ballColor(
-                robot.sensorIntakeU,
-                robot.sensorIntakeD
+                robot.sensorIntakeR,
+                robot.sensorIntakeL
         );
 
         long currentTime = System.currentTimeMillis();
@@ -357,6 +359,10 @@ public class MechController {
         );
 
         robot.conveyorMot.setPower(1);
+    }
+
+    public void setState(MechState state) {
+        currentState = state;
     }
 
     // Telemetry output

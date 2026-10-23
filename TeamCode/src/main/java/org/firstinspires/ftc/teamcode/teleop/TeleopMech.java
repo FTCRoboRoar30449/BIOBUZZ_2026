@@ -36,6 +36,7 @@ public class TeleopMech extends OpMode {
     public void init_loop() {
         mechController.update();
         mechController.allTelemetry();
+
     }
 
     @Override
@@ -45,9 +46,15 @@ public class TeleopMech extends OpMode {
 
     @Override
     public void loop() {
+
+        if (gamepad1.a) {
+            mechController.setState(MechState.INTAKE_FIELD);
+        } else if (gamepad1.b) {
+            mechController.setState(MechState.IDLE);
+        }
+
         mechController.update();
-
-
+        visionController.cellCount();
         // Telemetry
         mechController.allTelemetry();
     }
