@@ -16,8 +16,7 @@ public class VisionController {
     private AprilTagProcessor aprilTag;
     private VisionPortal visionPortal;
 
-    private int distanceNectar = 10; // placement color sensor
-    private int distancePollen = distanceNectar + 10;
+    private int distanceBall = 14; // placement color sensor
 
     // Constructor
     public VisionController(RobotHardware RoboRoar) {
@@ -55,8 +54,8 @@ public class VisionController {
     }
 
     // Start Limelight
-    public void initLimelight() {
-        robot.limeLight.pipelineSwitch(0);
+    public void cellCount() {
+        robot.limeLight.pipelineSwitch(4);
         robot.limeLight.start();
     }
 
@@ -91,12 +90,12 @@ public class VisionController {
         double distance = colorSensor.getDistance(DistanceUnit.MM);
 
         // Pollen
-        if (distance > distanceNectar && distance < distancePollen) {
+        if (distance > distanceBall) {
             return 1;
         }
 
         // Nectar
-        else if (distance <= distanceNectar) {
+        else if (distance < distanceBall) {
 
             float[] hsvValues = new float[3];
 

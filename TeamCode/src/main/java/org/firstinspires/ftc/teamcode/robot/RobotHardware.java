@@ -5,6 +5,7 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
@@ -25,7 +26,8 @@ public class RobotHardware {
     public final GoBildaPinpointDriver pinpoint;
     public final IMU imu;
     public final Telemetry telemetry;
-    public final RevColorSensorV3 sensorIntakeU, sensorIntakeD, sensorNectarL, sensorNectarR, sensorPollenL, sensorPollenR;
+    public final RevColorSensorV3 sensorIntakeR, sensorIntakeL, sensorNectarL, sensorNectarR, sensorPollenL, sensorPollenR;
+    public final DigitalChannel magneticLimitSwitch;
     public final WebcamName camera;
     public final Limelight3A limeLight;
     private final HardwareMap hwMap;
@@ -54,33 +56,35 @@ public class RobotHardware {
         this.hwMap = hwMap;
         this.telemetry = telemetry;
 
-        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot"); // E?
-        intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E?
-        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E?
-        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // E?
+        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot"); // C3
+        intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E3
+        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E0
+        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // C0
 
         // LFMotor C?
         // LBMotor C?
         // RFMotor E?
-        // RBMotor E?
+        // RBMotor E?`
 
-        turretRot = hwMap.get(Servo.class, "turretRot"); // E?
-        flowerIntake = hwMap.get(Servo.class, "flowerIntake"); // C?
-        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen"); // C?
-        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar"); // C?
-        hoodPollen = hwMap.get(Servo.class, "hoodPollen"); // C?
-        hoodNectar = hwMap.get(Servo.class, "hoodNectar"); // C?
+        turretRot = hwMap.get(Servo.class, "turretRot"); // C4
+        flowerIntake = hwMap.get(Servo.class, "flowerIntake"); // E2
+        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen"); // C2
+        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar"); // E4
+        hoodPollen = hwMap.get(Servo.class, "hoodPollen"); // C0
+        hoodNectar = hwMap.get(Servo.class, "hoodNectar"); // E0
 
 
-        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); //CI2C ?
+        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); //CI2C1
         imu = hwMap.get(IMU.class, "imu"); //CI2C0
 
-        sensorIntakeU = hwMap.get(RevColorSensorV3.class, "sensorIntakeU"); // EI2C ?
-        sensorIntakeD = hwMap.get(RevColorSensorV3.class, "sensorIntakeD"); // EI2C ?
-        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL"); // EI2C ?
-        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR"); // EI2C ?
-        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL"); // EI2C ?
-        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR"); // EI2C ?
+        sensorIntakeR = hwMap.get(RevColorSensorV3.class, "sensorIntakeR"); // EI2C0
+        sensorIntakeL = hwMap.get(RevColorSensorV3.class, "sensorIntakeL"); // EI2C1
+        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL"); // EI2C3
+        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR"); // EI2C2
+        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL"); // CI2C3
+        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR"); // CI2C2
+
+        magneticLimitSwitch = hwMap.get(DigitalChannel.class, "magneticLimitSwitch"); //C0-1
         camera = hwMap.get(WebcamName.class, "Webcam 1");
         limeLight = hwMap.get(Limelight3A.class, "limeLight");
 
