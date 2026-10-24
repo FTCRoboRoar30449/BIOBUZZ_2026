@@ -8,6 +8,7 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+import com.qualcomm.hardware.limelightvision.LLResult;
 
 public class VisionController {
 
@@ -59,6 +60,19 @@ public class VisionController {
         robot.limeLight.start();
     }
 
+    public int getFlowerPollenCount() {
+        LLResult result = robot.limeLight.getLatestResult();
+
+        if (result != null && result.isValid()) {
+            double[] output = result.getPythonOutput();
+
+            if (output != null && output.length > 0) {
+                return (int) output[0];
+            }
+        }
+
+        return -1;
+    }
     // Stop Limelight
     public void stopLimelight() {
         robot.limeLight.stop();

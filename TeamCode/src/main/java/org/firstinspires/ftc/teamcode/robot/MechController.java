@@ -54,6 +54,14 @@ public class MechController {
     private boolean waitingForWrongBallToClear = false;
     private int previousIntakeColor = 0;
 
+    private static final double FLOWER_REST_POSITION = 0.0;
+
+    //scoop position should be here(scoop positions are placeholders)
+    private static final double FLOWER_SCOOP_POSITION = 1.0;
+
+    private boolean flowerIntakeStopped = false;
+
+
     // Shared conveyor motor state
     private ConveyorType activeConveyor = ConveyorType.NONE;
     private int targetPos = -1;
@@ -124,10 +132,13 @@ public class MechController {
 
         // Continue an active conveyor movement even if the mechanism
         // state changes. Only search for new balls during field intake.
+
         if (currentState == MechState.INTAKE_FIELD
+                || currentState == MechState.INTAKE_FLOWER
                 || activeConveyor != ConveyorType.NONE) {
             updateConveyor();
         }
+
     }
 
     // Cleanup State
@@ -217,35 +228,85 @@ public class MechController {
 
         previousIntakeColor = ballColor;
     }
+
     private void updateFlowerIntake() {
+
+        //  Stop if the robot already has 4 balls
         if (countPollen + countNectar >= 4) {
             robot.intakeMot.setPower(0);
-            robot.conveyorMot.setPower(0);
-
-            robot.flowerIntake.setPosition(0);
+            robot.flowerIntake.setPosition(FLOWER_REST_POSITION);
+            flowerIntakeStopped = true;
             return;
         }
 
-        conveyorNectar(0);
+        //  Check the pollen count in the flower
+        int flowerPollen = visionController.getFlowerPollenCount();
+
+        //  Stop if the flower is empty or Limelight has no valid reading
+        // Stop if Limelight has no valid reading
+        if (flowerPollen < 0) {
+            robot.intakeMot.setPower(0);
+            robot.flowerIntake.setPosition(FLOWER_REST_POSITION);
+            flowerIntakeStopped = true;
+            return;
+        }
+
+// Stop if the flower has no pollen
+        if (flowerPollen == 0) {
+            robot.intakeMot.setPower(0);
+            robot.flowerIntake.setPosition(FLOWER_REST_POSITION);
+            flowerIntakeStopped = true;
+            return;
+        }
+
+        flowerIntakeStopped = false;
+
+        //  Raise both conveyor beds
+        conveyorNectar(1);
         conveyorPollen(1);
 
+        //  Move the scooper into position
+        robot.flowerIntake.setPosition(FLOWER_SCOOP_POSITION);
+
+        // Read the intake color sensors
         int ballColor = visionController.ballColor(
                 robot.sensorIntakeR,
                 robot.sensorIntakeL
         );
 
-        if (ballColor == 2 || ballColor == 3) {
-            robot.intakeMot.setPower(-1);
-        } else {
+        //  Accept pollen and reject nectar
+        if (ballColor == 1) {
+
+            // Pollen: intake forward
             robot.intakeMot.setPower(1);
 
-            if (ballColor == 1 && previousIntakeColor == 0) {
+            // Count only when a new ball is detected
+            if (previousIntakeColor == 0) {
                 countPollen++;
             }
+
+        } else if (ballColor == 2 || ballColor == 3) {
+
+            // Nectar: reverse the intake to reject it
+            robot.intakeMot.setPower(-1);
+
+        } else {
+
+            // No ball detected: keep collecting
+            robot.intakeMot.setPower(1);
         }
 
+        // remember sensor reading
         previousIntakeColor = ballColor;
+
+        // STEP 8: Return the scooper to rest when full
+        if (countPollen + countNectar >= 4) {
+            robot.intakeMot.setPower(0);
+            robot.flowerIntake.setPosition(FLOWER_REST_POSITION);
+            flowerIntakeStopped = true;
+        }
     }
+
     // Set nectar conveyor bed
     // 1 = up, 0 = down
     public void conveyorNectar(int up1dn0) {
@@ -320,9 +381,12 @@ public class MechController {
         }
 
         // Do not start a new conveyor movement outside field intake
-        if (currentState != MechState.INTAKE_FIELD) {
+
+        if (currentState != MechState.INTAKE_FIELD
+                && currentState != MechState.INTAKE_FLOWER) {
             return;
         }
+
 
         // Read the two stopper sensor pairs
         int pollenColor = visionController.ballColor(
@@ -336,14 +400,14 @@ public class MechController {
         );
 
         // Pollen has priority if both stoppers detect balls
+
         if (pollenColor == 1) {
-
             startConveyor(ConveyorType.POLLEN);
-
-        } else if (nectarColor == allianceTeamNectar) {
-
+        } else if (currentState == MechState.INTAKE_FIELD
+                && nectarColor == allianceTeamNectar) {
             startConveyor(ConveyorType.NECTAR);
         }
+
     }
 
     // Start one conveyor movement

@@ -18,6 +18,7 @@ public class TeleopMech extends OpMode {
     private VisionPortal visionPortal;
 
     @Override
+
     public void init() {
         robot = new RobotHardware(hardwareMap, telemetry);
 
@@ -26,7 +27,9 @@ public class TeleopMech extends OpMode {
         visionPortal = visionController.getVisionPortal();
 
         mechController = new MechController(robot, visionController);
-        mechController.handleMechState(MechState.START);
+        mechController.setState(MechState.START);
+
+        visionController.cellCount();
 
         telemetry.addData("Status", "Initialized");
         telemetry.update();
@@ -49,12 +52,13 @@ public class TeleopMech extends OpMode {
 
         if (gamepad1.a) {
             mechController.setState(MechState.INTAKE_FIELD);
+        } else if (gamepad1.x) {
+            mechController.setState(MechState.INTAKE_FLOWER);
         } else if (gamepad1.b) {
             mechController.setState(MechState.IDLE);
         }
-
         mechController.update();
-        visionController.cellCount();
+
         // Telemetry
         mechController.allTelemetry();
     }
