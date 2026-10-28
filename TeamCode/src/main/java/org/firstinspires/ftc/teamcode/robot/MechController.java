@@ -199,9 +199,7 @@ public class MechController {
         }
 
         // CASE 3: Reject a newly detected wrong-color ball
-        else if (ballColor != 0
-                && ballColor != 1
-                && ballColor != allianceTeamNectar) {
+        else if (ballColor != 0 && ballColor != 1 && ballColor != allianceTeamNectar) {
 
             reversingWrongBall = true;
             reverseBallStart = currentTime;
@@ -389,25 +387,23 @@ public class MechController {
 
 
         // Read the two stopper sensor pairs
-        int pollenColor = visionController.ballColor(
+        boolean pollenColor = visionController.ballCheck(
                 robot.sensorPollenL,
                 robot.sensorPollenR
         );
 
-        int nectarColor = visionController.ballColor(
+        boolean nectarColor = visionController.ballCheck(
                 robot.sensorNectarL,
                 robot.sensorNectarR
         );
 
         // Pollen has priority if both stoppers detect balls
 
-        if (pollenColor == 1) {
+        if (pollenColor == true) {
             startConveyor(ConveyorType.POLLEN);
-        } else if (currentState == MechState.INTAKE_FIELD
-                && nectarColor == allianceTeamNectar) {
+        } else if (currentState == MechState.INTAKE_FIELD && nectarColor == true) {
             startConveyor(ConveyorType.NECTAR);
         }
-
     }
 
     // Start one conveyor movement
@@ -462,22 +458,10 @@ public class MechController {
     public void allTelemetry() {
 
         telemetry.addData("State", currentState);
-        telemetry.addData(
-                "Pollen Count",
-                countPollen
-        );
-        telemetry.addData(
-                "Nectar Count",
-                countNectar
-        );
-        telemetry.addData(
-                "Rejecting Wrong Ball",
-                reversingWrongBall
-        );
-        telemetry.addData(
-                "Active Conveyor",
-                activeConveyor
-        );
+        telemetry.addData("Pollen Count", countPollen);
+        telemetry.addData("Nectar Count", countNectar);
+        telemetry.addData("Rejecting Wrong Ball", reversingWrongBall);
+        telemetry.addData("Active Conveyor", activeConveyor);
 
         if (robot.pinpoint != null) {
 

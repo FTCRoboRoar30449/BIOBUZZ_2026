@@ -5,6 +5,7 @@ import android.graphics.Color;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
@@ -17,7 +18,7 @@ public class VisionController {
     private AprilTagProcessor aprilTag;
     private VisionPortal visionPortal;
 
-    private int distanceBall = 14; // placement color sensor
+    private int distanceBall = 20; // placement color sensor
 
     // Constructor
     public VisionController(RobotHardware RoboRoar) {
@@ -77,6 +78,10 @@ public class VisionController {
     public void stopLimelight() {
         robot.limeLight.stop();
     }
+
+    public boolean ballCheck(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
+        return sensorL.getDistance(DistanceUnit.MM) < distanceBall || sensorR.getDistance(DistanceUnit.MM) < distanceBall;
+    }
     public int ballColor(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
         return isFinalColor(
                 isColor(sensorL),
@@ -103,13 +108,7 @@ public class VisionController {
         // Get distance in millimeters
         double distance = colorSensor.getDistance(DistanceUnit.MM);
 
-        // Pollen
-        if (distance > distanceBall) {
-            return 1;
-        }
-
-        // Nectar
-        else if (distance < distanceBall) {
+        if (distance < distanceBall) {
 
             float[] hsvValues = new float[3];
 
@@ -117,11 +116,15 @@ public class VisionController {
             int g = colorSensor.green();
             int b = colorSensor.blue();
 
-            // Scale RGB to 0–255 and convert to HSV
-            int red = Math.max(0, Math.min(255, r * 255 / 800));
-            int green = Math.max(0, Math.min(255, g * 255 / 800));
-            int blue = Math.max(0, Math.min(255, b * 255 / 800));
+            int maxRGB = Math.max(r, Math.max(g, b));
 
+            if (maxRGB == 0) {
+                return 0;
+            }
+
+            int red = r * 255 / maxRGB;
+            int green = g * 255 / maxRGB;
+            int blue = b * 255 / maxRGB;
             Color.RGBToHSV(red, green, blue, hsvValues);
 
             float hue = hsvValues[0];
@@ -129,7 +132,9 @@ public class VisionController {
             float val = hsvValues[2];
 
             // Color classification
-            if (isRed(hue, sat, val)) {
+            if (isYellow(hue, sat, val)) {
+                return 1; // Yellow
+            } else if  (isRed(hue, sat, val)) {
                 return 2; // Red
             } else if (isBlue(hue, sat, val)) {
                 return 3; // Blue
@@ -140,16 +145,21 @@ public class VisionController {
         return 0;
     }
 
-    private boolean isRed(float hue, float sat, float val) {
-        return (hue <= 40 || hue >= 320)
-                && sat > 0.25
-                && val > 0.15;
+    private boolean isBlue(float hue, float sat, float val) {
+        return hue >= 215 && hue <= 240
+                && sat >= 0.60
+                && val >= 0.50;
     }
 
-    private boolean isBlue(float hue, float sat, float val) {
-        return hue >= 190
-                && hue <= 270
-                && sat > 0.25
-                && val > 0.15;
+    private boolean isRed(float hue, float sat, float val) {
+        return hue >= 15 && hue <= 35
+                && sat >= 0.45
+                && val >= 0.50;
+    }
+
+    private boolean isYellow(float hue, float sat, float val) {
+        return hue >= 80 && hue <= 110
+                && sat >= 0.50
+                && val >= 0.50;
     }
 }
