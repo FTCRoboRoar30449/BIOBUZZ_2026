@@ -285,14 +285,27 @@ public class VisionController {
     }
 
     public int ballColor(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
-        return combineColors(readColor(sensorL), readColor(sensorR));
+        return combineColors(readColor(sensorL), readColor(sensorR),
+                             sensorL.getDistance(DistanceUnit.MM),
+                             sensorR.getDistance(DistanceUnit.MM));
     }
 
-    private int combineColors(int left, int right) {
-        // A disagreement is treated as unknown instead of incorrectly counting pollen.
+    /**
+     * Two sensors per station exist because the balls are PERFORATED. One can
+     * be looking through a hole and read nothing while the other sees the ball
+     * perfectly well, so a zero from one side is not evidence of anything --
+     * the other side wins.
+     *
+     * When both see something and disagree on the colour, trust the one that
+     * is CLOSER. A nearer reading fills more of the sensor's field and is less
+     * likely to be catching an edge, a neighbouring ball, or the tunnel wall.
+     * This used to return 0 and throw the reading away.
+     */
+    private int combineColors(int left, int right, double distL, double distR) {
         if (left == 0) return right;
         if (right == 0) return left;
-        return left == right ? left : 0;
+        if (left == right) return left;
+        return distL <= distR ? left : right;
     }
 
     private int readColor(RevColorSensorV3 sensor) {

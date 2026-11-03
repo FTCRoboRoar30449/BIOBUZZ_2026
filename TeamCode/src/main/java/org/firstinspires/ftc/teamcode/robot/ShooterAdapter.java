@@ -142,6 +142,55 @@ public final class ShooterAdapter {
         return null;
     }
 
+    /**
+     * Nearest flower, from ANYWHERE on the field.
+     *
+     * flowerTargetForPosition() only answers once you are already standing in
+     * a flower zone, which is no use for "drive me to the nearest flower".
+     * This scans every zone and returns the closest aim point regardless.
+     *
+     * The aim point IS the flower's physical location, so this is also what
+     * MechController measures scoop clearance against.
+     *
+     * @return {x, y} PEDRO inches. Never null -- there is always a nearest.
+     */
+    public double[] nearestFlowerTarget(double x, double y) {
+        double[] best = null;
+        double bestD2 = Double.MAX_VALUE;
+        for (Zone z : flowerZones) {
+            double dx = z.targetX - x, dy = z.targetY - y;
+            double d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; best = new double[] { z.targetX, z.targetY }; }
+        }
+        return best;
+    }
+
+    /**
+     * Centre of the shooting zone for a hive target -- a known-good place to
+     * stand, for a follower to drive to.
+     *
+     * This is deliberately NOT an optimised firing position. Searching the
+     * field for the best spot is a different problem, and the zone centre is
+     * inside a region already verified to produce valid shots.
+     *
+     * @return {x, y} PEDRO inches.
+     */
+    public double[] hiveZoneCentre(Target t) {
+        Zone z = hiveZones[t == Target.FAR_SIDE ? 0 : 1];
+        return new double[] { (z.x0 + z.x1) / 2.0, (z.y0 + z.y1) / 2.0 };
+    }
+
+    /** True when this position is inside the shooting zone for that target. */
+    public boolean inHiveZone(Target t, double x, double y) {
+        return hiveZones[t == Target.FAR_SIDE ? 0 : 1].contains(x, y);
+    }
+
+    /** True when this position is inside any flower zone. */
+    public boolean inFlowerZone(double x, double y) {
+        for (Zone z : flowerZones) if (z.contains(x, y)) return true;
+        return false;
+    }
+
     /** Flower aim point for this position, or null if outside both zones. */
     public double[] flowerTargetForPosition(double x, double y) {
         for (Zone z : flowerZones) {
