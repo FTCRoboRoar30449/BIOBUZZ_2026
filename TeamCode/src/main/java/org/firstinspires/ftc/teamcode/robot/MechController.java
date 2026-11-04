@@ -344,6 +344,19 @@ public class MechController {
                 && turnDegPerSec <= FIRE_MAX_TURN_DEG_S;
     }
 
+    /*
+     * READ-ONLY STATE FOR AUTONOMOUS.
+     *
+     * These and the handful like them -- isPreSpinning, isFlowing,
+     * getPollenExits, getNectarExits, isDeployed, isCellTipped -- have no
+     * caller inside this class, and that is deliberate. They are the surface
+     * a Pedro autonomous will need to decide when to drive on: has the volley
+     * finished, did the balls actually leave, is the scoop clear, has the
+     * CELL tipped.
+     *
+     * Do not delete them as dead code. The telemetry reads the private fields
+     * directly, so nothing here is a duplicate accessor for debugging.
+     */
     public double getSpeedInPerSec() { return speedInPerSec; }
 
     public void update() {
@@ -356,30 +369,59 @@ public class MechController {
         lastLoopMs = nowMs;
 
         turret.update();
+
+        /*
+         * POLL THE LIMELIGHT EVERY LOOP, in every state.
+         *
+         * updateRaisedTarget() was called only from pre-spin, continuous fire
+         * and SHOOTING_HIVE. So in IDLE -- which is where you sit while
+         * watching telemetry -- nothing polled the camera at all, the cached
+         * target stayed null, and the Target line reported "(by zone)" no
+         * matter what the Limelight could see. That reads as a broken camera
+         * and is really just nobody asking it.
+         *
+         * Polling here also keeps the 4-frame stability filter CONVERGED, so
+         * entering a shooting state does not start by waiting for it. One
+         * Limelight read per loop; the shooting paths now use the cached
+         * value rather than each re-polling.
+         */
+        vision.updateRaisedTarget();
+
         handleMechState(this.currentState);
         // AFTER the state, not before: deployment owns the intake motor for
         // its window and must win. Run first and IDLE's stopIntake() would
         // cancel it every loop and the arm would never swing.
         serviceDeploy(nowMs);
+        // Single owner for the scoop, by distance only. See serviceScoop().
+        serviceScoop();
+
+        // Watch both flywheels for the dip a departing ball causes. One loop
+        // behind the state logic, which is harmless: a dip seen now is
+        // consumed by the next serviceContinuousFire().
+        serviceExitDetect();
 
         /*
-         * Completion ALWAYS runs; indexing only in intake states.
+         * Completion ALWAYS runs, in every state.
          *
-         * These used to be one method behind the intake-state gate, and that
-         * was a deadlock. An index started in INTAKE_FLOWER_SHOOT_HIVE leaves
-         * activeConveyor set; the flower then empties, the state becomes
-         * SHOOTING_HIVE, and the only code that clears activeConveyor is no
-         * longer being called. SPIN_UP waits on it, the wait skips the
-         * timeout, and the robot never fires again for the rest of the match.
+         * This used to live inside updateConveyor(), behind the intake-state
+         * gate, and that was a deadlock. An index started in
+         * INTAKE_FLOWER_SHOOT_HIVE leaves activeConveyor set; the flower then
+         * empties, the state becomes SHOOTING_HIVE, and the only code that
+         * clears activeConveyor is no longer being called. SPIN_UP waits on
+         * it and the robot never fires again for the rest of the match.
          *
          * A transfer in progress has to be allowed to finish no matter what
          * state the robot moved to while it was running.
          */
-        serviceExitDetect();
         serviceConveyorCompletion();
-        if (isIntakeState(currentState)) {
-            updateConveyor();
-        }
+        /*
+         * Called in EVERY state now. It gates itself internally, and its first
+         * act is to read the bed sensors -- so the seen-flags and the
+         * telemetry stay current even while shooting, when no indexing can
+         * happen. Calling it only in intake states left that history frozen
+         * for the whole of a volley.
+         */
+        updateConveyor();
     }
 
     /**
@@ -434,6 +476,23 @@ public class MechController {
         }
     }
 
+    /**
+     * Put the beds in a known position at INIT, before play is pressed.
+     *
+     * The FSM cannot do this itself: update() is only called from loop(), and
+     * loop() does not run until play. So the beds used to be uncommanded for
+     * the whole init period and only snapped up when an intake state was
+     * first entered -- which looks like the servos waking up late, and leaves
+     * them unpowered and free to be knocked out of position beforehand.
+     *
+     * Safe to call at init: it moves only the two bed servos, which are
+     * internal to the conveyor, and commands them to the resting pattern.
+     * Call it from the OpMode's init(), after RobotHardware is built.
+     */
+    public void initPositions() {
+        setBedsUp();
+    }
+
     public MechState getCurrentState() { return currentState; }
 
     public void setState(MechState newState) {
@@ -455,7 +514,7 @@ public class MechController {
         nectarExitsAtArm = nectarExits;
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
-            scoopTo(FLOWER_REST);
+            // scoop: serviceScoop() folds it once clear of the flower
             operationStatus = OperationStatus.CANCELLED;
         } else if (newState == MechState.START) {
             operationStatus = OperationStatus.NOT_STARTED;
@@ -471,7 +530,7 @@ public class MechController {
         if (oldState == MechState.INTAKE_FLOWER || oldState == MechState.INTAKE_FLOWER_SHOOT_HIVE
                 || oldState == MechState.INTAKE_FLOWER_SHOOT_FLOWER) {
             stopIntake();
-            scoopTo(FLOWER_REST);
+            // scoop: serviceScoop() folds it once clear of the flower
         }
         /*
          * Stop the flywheels when leaving a state that spins them FOR a state
@@ -516,7 +575,7 @@ public class MechController {
 
             case IDLE:
                 stopIntake(); stopShooterMotors();
-                scoopTo(FLOWER_REST);
+                // scoop: serviceScoop() folds it once clear of the flower
                 if (activeConveyor == ConveyorType.NONE) robot.conveyorMot.setPower(0);
                 break;
 
@@ -554,13 +613,24 @@ public class MechController {
                     // breaks out below.
                     servicePreSpin();
                 }
+                /*
+                 * Beds BEFORE the full check.
+                 *
+                 * ROBOT_FULL breaks out, and setBedsUp() used to sit below it
+                 * -- so entering INTAKE_FIELD already holding 4 balls left the
+                 * bed servos never commanded at all. They sat wherever they
+                 * happened to be, which on the bench looks exactly like dead
+                 * servos. A full robot still needs its beds in a known state.
+                 *
+                 * Still skipped while flowing, or this fights the pollen-only
+                 * pattern serviceContinuousFire() sets and the nectar bed is
+                 * driven up and down on alternate loops.
+                 */
+                if (!flowing) setBedsUp();
+
                 if (totalBalls() >= 4) {
                     stopIntake(); resetFieldReject(); operationStatus = OperationStatus.ROBOT_FULL; break;
                 }
-                // Only when nothing is streaming -- otherwise this fights the
-                // bed pattern serviceContinuousFire() just set, and the nectar
-                // bed is driven up and down on alternate loops.
-                if (!flowing) setBedsUp();
                 int color = intakeColor();
                 if (reversingWrongBall) {
                     robot.intakeMot.setPower(-INTAKE_POWER);
@@ -653,12 +723,22 @@ public class MechController {
                  * has put the robot at a flower it cannot localise still wants
                  * the scoop down.
                  */
+                /*
+                 * Same NaN split as serviceScoop(). No pose -> honour the
+                 * driver. Pose but no flower zone -> we know we are nowhere
+                 * near a flower, so do NOT run the intake. Before the four
+                 * zones went live this read "just do it" for both, which
+                 * would now spin the intake in the middle of the field.
+                 */
+                boolean noPose = !poseValid;
                 double fRange = flowerRangeIn();
                 boolean knowRange = !Double.isNaN(fRange);
-                boolean clearToDeploy = !knowRange || fRange <= FLOWER_DEPLOY_IN;
-                boolean atFlower     = !knowRange || fRange <= FLOWER_INTAKE_IN;
+                // No clearToDeploy here any more -- serviceScoop() owns the
+                // scoop and applies FLOWER_DEPLOY_IN itself. This case only
+                // decides whether to run the INTAKE.
+                boolean atFlower = noPose || (knowRange && fRange <= FLOWER_INTAKE_IN);
 
-                if (knowRange && fRange > FLOWER_RETRACT_IN) {
+                if (!noPose && (!knowRange || fRange > FLOWER_RETRACT_IN)) {
                     /*
                      * Driven away from the flower. Fold the scoop -- but KEEP
                      * SHOOTING. The drive between a flower and a hive zone is
@@ -691,7 +771,7 @@ public class MechController {
                  * Only plain INTAKE_FLOWER, which never fires, sets them here.
                  */
                 if (state == MechState.INTAKE_FLOWER) setBedsUp();
-                scoopTo(clearToDeploy ? FLOWER_SCOOP : FLOWER_REST);
+                // Scoop is serviceScoop()'s job now -- same distances, one owner.
                 if (!atFlower) {
                     // Approaching, not there yet. Do not run the intake -- but
                     // DO keep shooting: the drive in is free cycle time, and a
@@ -765,7 +845,7 @@ public class MechController {
                 }
 
                 // Which CELL is up: tags first, zone only as a fallback.
-                ShooterAdapter.Target tgt = vision.updateRaisedTarget();
+                ShooterAdapter.Target tgt = vision.getRaisedTarget();
                 if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
                 if (tgt == null) {
                     /*
@@ -838,12 +918,30 @@ public class MechController {
                     // plan() answers the question planHere() cannot: IS there a
                     // heading that works from this spot? Turning it into a
                     // number the driver can act on beats "reposition".
+                    /*
+                     * Name the TARGET, the distance and WHICH ball failed.
+                     *
+                     * "drive closer" alone is useless: a nectar 0.3 in past
+                     * the table edge and a robot 60 in away read identically,
+                     * and so does aiming at the wrong CELL entirely. All
+                     * three have different fixes.
+                     */
+                    ShooterAdapter.Shot ps = shooter.solve(
+                            ShooterAdapter.Ball.POLLEN, tgt, poseX, poseY, poseHeadingDeg);
+                    ShooterAdapter.Shot ns = shooter.solve(
+                            ShooterAdapter.Ball.NECTAR, tgt, poseX, poseY, poseHeadingDeg);
+                    double gd = Math.hypot(shooter.goalX(tgt) - poseX,
+                                           shooter.goalY(tgt) - poseY);
                     ShooterAdapter.FirePlan would =
                             shooter.plan(tgt, poseX, poseY, poseHeadingDeg);
-                    shotNote = would.valid
-                            ? String.format("no shot at this heading - turn to %.0f deg",
-                                            would.yawDeg)
-                            : "no shot from here - drive closer";
+                    shotNote = String.format(
+                            "no shot: %s @ %.0f in  [P %s  N %s]  %s",
+                            tgt, gd,
+                            ps.valid ? "ok" : "FAIL",
+                            ns.valid ? "ok" : "FAIL",
+                            would.valid
+                                ? String.format("turn to %.0f deg", would.yawDeg)
+                                : "table is 15-39 in");
                     break;
                 }
                 operationStatus = OperationStatus.RUNNING;
@@ -966,16 +1064,9 @@ public class MechController {
         if (totalBalls() <= 0 || !poseValid) return;
         if (REQUIRE_HOMED && !turret.isHomed()) return;
 
-        /*
-         * updateRaisedTarget(), not getRaisedTarget().
-         *
-         * Polling here keeps the 4-frame stability filter WARM during intake,
-         * so the target is already converged when the driver commits. Reading
-         * the cache instead left it stale through the whole collection and the
-         * filter had to re-converge after the shoot command -- exactly the
-         * delay pre-spin exists to remove.
-         */
-        ShooterAdapter.Target tgt = vision.updateRaisedTarget();
+        // The cache is refreshed every loop by update(), so it is always
+        // current and the stability filter is already converged.
+        ShooterAdapter.Target tgt = vision.getRaisedTarget();
         if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
         if (tgt == null || !shooter.inHiveZone(tgt, poseX, poseY)) return;
 
@@ -1100,11 +1191,23 @@ public class MechController {
      * Until it is, the inventory in this mode is a guess.
      */
     private void serviceContinuousFire(long now, boolean hive) {
-        if (REQUIRE_HOMED && !turret.isHomed()) { haltFlow(); return; }
-        if (!poseValid)                         { haltFlow(); return; }
+        // Each refusal names itself. Collecting continues either way -- these
+        // set only shotNote, never operationStatus.
+        if (REQUIRE_HOMED && !turret.isHomed()) {
+            shotNote = "holding fire: turret not homed"; haltFlow(); return;
+        }
+        if (!poseValid) {
+            shotNote = "holding fire: no pose"; haltFlow(); return;
+        }
         // A flower shot is pollen by definition. A hive volley will take
         // whatever we are holding, so it only needs SOMETHING.
-        if (hive ? totalBalls() <= 0 : countPollen <= 0) { haltFlow(); return; }
+        if (hive ? totalBalls() <= 0 : countPollen <= 0) {
+            shotNote = "holding fire: nothing to shoot"; haltFlow(); return;
+        }
+        // We own the wheels now, not pre-spin. Clearing the flag keeps the
+        // telemetry honest -- a label that says PRE-SPUN while something else
+        // is driving is the same class of lie DIP_COUNTS_BALLS was.
+        preSpinning = false;
         streamNectar = false;
 
         // Where are we shooting?
@@ -1112,14 +1215,39 @@ public class MechController {
         double hoodDeg;
         double rpm;
         if (hive) {
-            ShooterAdapter.Target tgt = vision.updateRaisedTarget();
+            ShooterAdapter.Target tgt = vision.getRaisedTarget();
             if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
-            if (tgt == null) { haltFlow(); return; }
+            if (tgt == null) {
+                shotNote = "holding fire: no CELL in view, not in a hive zone";
+                haltFlow(); return;
+            }
             // A tipped CELL ends the volley -- see checkCellTipped().
             if (checkCellTipped(tgt)) { haltFlow(); return; }
             ShooterAdapter.FirePlan plan =
                     shooter.planHere(tgt, poseX, poseY, poseHeadingDeg);
-            if (!plan.valid) { haltFlow(); return; }
+            if (!plan.valid) {
+                /*
+                 * Say WHY, without touching operationStatus.
+                 *
+                 * This used to return in silence so that collecting carried
+                 * on uninterrupted. It does -- but the driver then sees an
+                 * intake state running happily and no balls leaving, with
+                 * nothing on screen to explain it.
+                 *
+                 * The usual cause is simply range. No flower on the field is
+                 * within hive shooting distance: the closest approach is
+                 * 45.4 in against a table that stops at 39. So a combo state
+                 * standing AT a flower can never fire at the hive, and only
+                 * starts once the robot has driven back toward the zone.
+                 */
+                double d = Math.hypot(shooter.goalX(tgt) - poseX,
+                                      shooter.goalY(tgt) - poseY);
+                shotNote = String.format(
+                        "holding fire: %.0f in to %s (table 15-39) - drive closer",
+                        d, tgt);
+                haltFlow();
+                return;
+            }
             lastPlan = plan;
             turretDeg = (plan.mode == ShooterAdapter.FireMode.SIMULTANEOUS)
                     ? plan.sharedTurretDeg : plan.pollen.turretDeg;
@@ -1470,18 +1598,33 @@ public class MechController {
     private boolean shotOwnsBelt() { return shotPhase == ShotPhase.FEEDING; }
 
     private void updateConveyor() {
-        // Continuous flow already runs the belt and carries balls in as it
-        // carries them out. Indexing on top of that would fight it.
-        if (flowing) return;
-        if (shotOwnsBelt()) return;
-        // Completion is handled by serviceConveyorCompletion() in update(),
-        // which runs in every state. Here we only decline to start a NEW
-        // transfer while one is still moving.
-        if (activeConveyor != ConveyorType.NONE) return;
-        if (!isIntakeState(currentState)) return;
-        if (totalBalls() >= 4) return;
+        /*
+         * READ THE SENSORS FIRST, before any early return.
+         *
+         * The seen-flags carry the rising-edge history, and they used to be
+         * updated only at the bottom -- after five conditions that can each
+         * skip the whole method. Any pause (a transfer running, continuous
+         * flow, a full robot) froze that history at whatever it was, so a
+         * ball that arrived and left during the pause was invisible, and the
+         * telemetry showed a state several seconds stale.
+         *
+         * Reading is two I2C distance checks. Cheap, and always honest.
+         */
         boolean pollen = vision.ballCheck(robot.sensorPollenL, robot.sensorPollenR);
         boolean nectar = vision.ballCheck(robot.sensorNectarL, robot.sensorNectarR);
+
+        // Continuous flow already runs the belt and carries balls in as it
+        // carries them out. Indexing on top of that would fight it.
+        if (flowing || shotOwnsBelt()
+                || activeConveyor != ConveyorType.NONE
+                || !isIntakeState(currentState)
+                || totalBalls() >= 4) {
+            // Keep the history current so the NEXT eligible loop sees a true
+            // edge rather than one invented by the gap.
+            pollenBedSeen = pollen;
+            nectarBedSeen = nectar;
+            return;
+        }
 
         /*
          * ADVANCE UNTIL CLEAR, not once per rising edge.
@@ -1672,10 +1815,69 @@ public class MechController {
         robot.flowerIntake.setPosition(pos);
     }
 
+    /**
+     * ONE owner for the scoop, called every loop from update().
+     *
+     * Scoop position is a function of DISTANCE and nothing else. It used to be
+     * written from five places -- IDLE, onStateExit, stopFlowerIntake, the
+     * flower case, stopAll -- and three of those fired on INVENTORY. Filling
+     * up folded the scoop instantly, while the robot was still hard against
+     * the flower, which is the exact thing the clearance distances exist to
+     * prevent. Same scattered-ownership mistake the beds had.
+     *
+     *   collecting AND inside DEPLOY      -> SCOOP
+     *   beyond RETRACT, or nowhere near   -> REST
+     *   in between, or close but idle     -> leave it alone
+     *
+     * That last case matters: a robot that stops collecting while still at
+     * the flower keeps the scoop out until it has driven clear. Folding early
+     * is what jams it.
+     */
+    private void serviceScoop() {
+        if (!deployDone) return;
+
+        /*
+         * NaN means two different things, and they want opposite answers.
+         *
+         *   no pose at all        -> we have no idea where we are. A driver
+         *                            who commanded a flower state presumably
+         *                            parked at a flower, so honour it.
+         *   pose, but no zone     -> we know EXACTLY where we are, and it is
+         *                            not near any flower. Stay folded.
+         *
+         * Treating both as "just do it" was fine when the zones were sparse.
+         * With all four live they cover most of the field, so the only poses
+         * that fall outside are genuinely nowhere near a flower -- the middle
+         * of the field, for instance -- and deploying the scoop there is
+         * exactly wrong.
+         */
+        boolean noPose = !poseValid;
+        double r = flowerRangeIn();
+        boolean know = !Double.isNaN(r);
+        boolean collecting = currentState == MechState.INTAKE_FLOWER
+                || currentState == MechState.INTAKE_FLOWER_SHOOT_HIVE
+                || currentState == MechState.INTAKE_FLOWER_SHOOT_FLOWER;
+
+        boolean nearEnough = noPose || (know && r <= FLOWER_DEPLOY_IN);
+        boolean wellClear  = noPose ? false : (!know || r > FLOWER_RETRACT_IN);
+
+        if (collecting && nearEnough) {
+            robot.flowerIntake.setPosition(FLOWER_SCOOP);
+        } else if (wellClear) {
+            robot.flowerIntake.setPosition(FLOWER_REST);
+        }
+        // else: close but not collecting -- hold position until clear.
+    }
+
     /** True once the start-of-match arm deployment has finished. */
     public boolean isDeployed() { return deployDone; }
 
-    private void stopFlowerIntake() { stopIntake(); scoopTo(FLOWER_REST); }
+    /**
+     * Stop collecting. Does NOT fold the scoop -- serviceScoop() owns that,
+     * and folds only once the robot is clear of the flower. Folding here is
+     * what made a full robot retract the scoop while still against the flower.
+     */
+    private void stopFlowerIntake() { stopIntake(); }
     private void stopShooterMotors() {
         preSpinning = false;
         robot.nectarShootingMot.setVelocity(0);
@@ -1740,6 +1942,59 @@ public class MechController {
         telemetry.addData("Exits (RPM dip)", "pollen %d   nectar %d   (shots %d)",
                 pollenExits, nectarExits, shotsCompleted);
         // Why a shot is or is not going out right now, in one line.
+        /*
+         * Pose and target belong on the COMPACT screen.
+         *
+         * Nearly every "why is it not shooting" question comes down to one of
+         * three things: the robot is not where you think, the target is not
+         * the CELL you think, or the range is outside the table. All three are
+         * invisible unless you switch to full telemetry, which is exactly when
+         * you are least likely to think of it.
+         */
+        telemetry.addData("Pose", poseValid
+                ? String.format("%.0f, %.0f @ %.0f deg", poseX, poseY, poseHeadingDeg)
+                : "NOT SET");
+        ShooterAdapter.Target seen = vision.getRaisedTarget();
+        telemetry.addData("Target", "%s%s",
+                seen != null ? seen + " (tag)"
+                             : String.valueOf(shooter.hiveTargetForPosition(poseX, poseY)),
+                seen == null ? " (by zone)" : "");
+        /*
+         * RAW tag IDs, unfiltered. This is what separates "the camera sees
+         * nothing" from "the camera sees a tag that is not ours".
+         *
+         * targetForTagId() accepts only 30-37 for RED and 38-45 for BLUE.
+         * Any other ID is counted by the Limelight, listed by HardwareCheck,
+         * and then dropped here -- producing "(by zone)" with a tag plainly
+         * in view, which looks exactly like a dead camera.
+         */
+        telemetry.addData("Tags seen", "%d raw [%s]   %d ours",
+                vision.getRawTagCount(),
+                vision.getLastRawIds().isEmpty() ? "none" : vision.getLastRawIds(),
+                vision.getVisibleTagCount());
+        // Filter progress. Tags arriving but this stuck near 0 means the
+        // detection is intermittent and confidence is being lost as fast as
+        // it is gained -- which is what the old reset-to-zero guaranteed.
+        telemetry.addData("Tag filter", "%d/%d agreed   %d lost",
+                vision.getCandidateFrames(), VisionController.REQUIRED_STABLE_FRAMES,
+                vision.getLostFrames());
+        /*
+         * Bed sensors and conveyor state, on the COMPACT screen.
+         *
+         * The beds only split when a BED sensor sees a ball and
+         * updateConveyor() starts a transfer. Four separate conditions can
+         * silently stop that -- full inventory, a transfer already running,
+         * continuous flow owning the belt, or simply no ball at the sensor --
+         * and none of them were visible. "The opposite servo did not move"
+         * could be any of them.
+         */
+        telemetry.addData("Bed sees", "pollen %s   nectar %s",
+                pollenBedSeen ? "BALL" : "-", nectarBedSeen ? "BALL" : "-");
+        telemetry.addData("Index", "%s%s", activeConveyor,
+                activeConveyor != ConveyorType.NONE
+                        ? "  busy " + robot.conveyorMot.isBusy()
+                        : (totalBalls() >= 4 ? "   (BLOCKED: 4 balls)"
+                           : flowing ? "   (BLOCKED: flowing)" : ""));
         telemetry.addData("Fire gate", "%s   %.1f in/s %s",
                 inFiringPosition() ? "in zone" : "no zone/target",
                 speedInPerSec,

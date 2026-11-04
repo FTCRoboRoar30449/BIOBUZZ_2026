@@ -87,11 +87,29 @@ public final class ShooterAdapter {
 
     public ShooterAdapter(Alliance alliance) {
         this.alliance = alliance;
+
+        /*
+         * ALL FOUR FLOWERS, BOTH ALLIANCES.
+         *
+         * Flowers are not alliance property -- either team may collect from
+         * any of the four during either match. The zones used to be split two
+         * and two, which silently made half the field unusable: a red robot
+         * at a "blue" flower got null from flowerTargetForPosition(), so
+         * flowerRangeIn() returned NaN, the scoop fell back to its
+         * unknown-range behaviour and the flower shot refused with "not in a
+         * flower zone".
+         *
+         * Same list for both alliances now. HIVE zones stay split, because
+         * those really are alliance-specific.
+         */
+        flowerZones = new Zone[] {
+            new Zone(0,   0,  48,  96,    4,  48),   // red side, audience
+            new Zone(0,  96,  96, 144,   48, 140),   // red side, scoring
+            new Zone(48,  0, 144,  48,   96,   4),   // blue side, audience
+            new Zone(96, 48, 144, 144,  140,  96)    // blue side, scoring
+        };
+
         if (alliance == Alliance.RED) {
-            flowerZones = new Zone[] {
-                new Zone(0,  0,  48, 96,   4,  48),    // audience-side flower
-                new Zone(0, 96,  96, 144, 48, 140)     // scoring-side flower
-            };
             hiveZones = new Zone[] {
                 new Zone(24, 108, 96, 144, ShooterRed.goalX(ShooterRed.Target.FAR_SIDE),
                                             ShooterRed.goalY(ShooterRed.Target.FAR_SIDE)),
@@ -99,10 +117,6 @@ public final class ShooterAdapter {
                                             ShooterRed.goalY(ShooterRed.Target.AUDIENCE_SIDE))
             };
         } else {
-            flowerZones = new Zone[] {
-                new Zone(48,  0, 144,  48,  96,   4),
-                new Zone(96, 48, 144, 144, 140,  96)
-            };
             hiveZones = new Zone[] {
                 new Zone(48, 108, 120, 144, ShooterBlue.goalX(ShooterBlue.Target.FAR_SIDE),
                                              ShooterBlue.goalY(ShooterBlue.Target.FAR_SIDE)),
@@ -193,10 +207,24 @@ public final class ShooterAdapter {
 
     /** Flower aim point for this position, or null if outside both zones. */
     public double[] flowerTargetForPosition(double x, double y) {
+        /*
+         * NEAREST containing zone, not the first.
+         *
+         * With two zones per alliance the first match was unambiguous. With
+         * all four live they share edges, so a robot standing on a boundary
+         * could be handed the flower further away -- and MechController
+         * measures scoop clearance against whatever comes back. Picking the
+         * nearest makes the answer independent of array order.
+         */
+        double[] best = null;
+        double bestD2 = Double.MAX_VALUE;
         for (Zone z : flowerZones) {
-            if (z.contains(x, y)) return new double[] { z.targetX, z.targetY };
+            if (!z.contains(x, y)) continue;
+            double dx = z.targetX - x, dy = z.targetY - y;
+            double d2 = dx * dx + dy * dy;
+            if (d2 < bestD2) { bestD2 = d2; best = new double[] { z.targetX, z.targetY }; }
         }
-        return null;
+        return best;
     }
 
     public double goalX(Target t) {

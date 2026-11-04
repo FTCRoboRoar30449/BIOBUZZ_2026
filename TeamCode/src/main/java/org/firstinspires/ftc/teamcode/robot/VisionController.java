@@ -137,6 +137,29 @@ public class VisionController {
     public int getCurrentPipeline() { return currentPipeline; }
 
     /**
+     * Force a pipeline, ignoring the idempotence guard, and restart.
+     *
+     * For the bench only. startHiveAprilTagPipeline() skips the switch when it
+     * believes the Limelight is already on 1 -- which is useless when the
+     * question is whether that belief is true. This re-issues the command
+     * unconditionally so a switch that silently failed can be retried, and so
+     * other indices can be tried without a rebuild.
+     */
+    public void forcePipeline(int index) {
+        robot.limeLight.setPollRateHz(POLL_RATE_HZ);
+        robot.limeLight.pipelineSwitch(index);
+        robot.limeLight.start();
+        currentPipeline = index;
+        resetRaisedCellFilter();
+    }
+
+    /** Is the hub actually talking to the Limelight? The decisive question. */
+    public boolean isLimelightConnected() { return robot.limeLight.isConnected(); }
+
+    /** Seconds since the last update. Climbing = connected but not polling. */
+    public double limelightAgeSec() { return robot.limeLight.getTimeSinceLastUpdate(); }
+
+    /**
      * Pipeline 1: AprilTag pipeline aimed at the HIVE.
      *
      * Idempotent. Re-commanding the pipeline costs a switch AND wipes the
@@ -145,11 +168,39 @@ public class VisionController {
      * to SHOOTING_HIVE, re-entering a state the Limelight was already serving
      * used to throw away a perfectly good target for no reason.
      */
+    /**
+     * How often the hub polls the Limelight. MUST be set BEFORE start().
+     *
+     * This was never called at all. The documented order is
+     * setPollRateHz -> pipelineSwitch -> start, and getting it wrong is a
+     * silent failure: the Limelight runs, its web page shows tags, and the
+     * hub simply never collects them.
+     */
+    public static int POLL_RATE_HZ = 100;
+
+    /**
+     * Which Limelight pipeline holds the AprilTag program.
+     *
+     * 1 -- confirmed working. Pipelines 0 and 1 are both configured as
+     * AprilTag on this camera, so either index works; 1 is the one that has
+     * actually been run.
+     *
+     * A constant rather than a literal because the index is a property of the
+     * camera, not of this code. If the pipelines are ever renumbered, change
+     * this to match rather than moving a working pipeline on the Limelight.
+     *
+     * NOTE for anyone debugging "the Limelight sees tags but the robot does
+     * not": the index was NOT the cause of that. See the ID FILTER note in
+     * HANDOFF.md -- a filter excluding 30-45 produces exactly that symptom.
+     */
+    public static int HIVE_PIPELINE = 1;
+
     public void startHiveAprilTagPipeline() {
-        if (currentPipeline == 1) return;
-        robot.limeLight.pipelineSwitch(1);
+        if (currentPipeline == HIVE_PIPELINE) return;
+        robot.limeLight.setPollRateHz(POLL_RATE_HZ);
+        robot.limeLight.pipelineSwitch(HIVE_PIPELINE);
         robot.limeLight.start();
-        currentPipeline = 1;
+        currentPipeline = HIVE_PIPELINE;
         resetRaisedCellFilter();
     }
 
@@ -184,12 +235,54 @@ public class VisionController {
      */
     public ShooterAdapter.Target updateRaisedTarget() {
         LLResult result = robot.limeLight.getLatestResult();
-        if (result == null || !result.isValid()) {
+        /*
+         * DO NOT GATE ON isValid().
+         *
+         * isValid() reflects whether the pipeline has a PRIMARY TARGET -- the
+         * thing tx/ty are measured against. An AprilTag pipeline that is
+         * tracking fiducials perfectly well reports tx = ty = 0 and
+         * isValid() = false whenever no single tag has been designated
+         * primary, which is the normal state when you are simply reading IDs.
+         *
+         * This method does not use tx or ty at all. It only asks WHICH tags
+         * are in frame, because a cluster being visible is what identifies
+         * the raised CELL. Requiring isValid() first threw away every good
+         * detection: the Limelight web page showed the tags, and the robot
+         * saw nothing.
+         *
+         * Ask the fiducial list directly. It is the only thing we need.
+         */
+        if (result == null) {
             noteLost();
             return raisedTarget;
         }
 
         List<LLResultTypes.FiducialResult> tags = result.getFiducialResults();
+
+        /*
+         * RECORD WHAT WE SAW, before filtering it.
+         *
+         * targetForTagId() returns null for any ID that is not ours -- 30-37
+         * for red, 38-45 for blue. A tag of ANY other ID is counted by the
+         * Limelight, shown by HardwareCheck's "tag ids" line, and then
+         * silently dropped here. The result is a robot that reports
+         * "(by zone)" while a tag is plainly in view, which is
+         * indistinguishable from the camera not working at all.
+         *
+         * Keeping the raw IDs separates the two: raw empty means nothing is
+         * reaching us, raw non-empty with no ours means wrong tag.
+         */
+        lastRawIds = "";
+        lastRawCount = 0;
+        if (tags != null) {
+            lastRawCount = tags.size();
+            StringBuilder sb = new StringBuilder();
+            for (LLResultTypes.FiducialResult f : tags) {
+                sb.append(f.getFiducialId()).append(' ');
+            }
+            lastRawIds = sb.toString().trim();
+        }
+
         if (tags == null || tags.isEmpty()) {
             noteLost();
             return raisedTarget;
@@ -224,12 +317,44 @@ public class VisionController {
         return raisedTarget;
     }
 
+    /**
+     * DECAY the confidence, do not destroy it.
+     *
+     * This used to set candidateFrames = 0 on every lost frame, and that made
+     * the filter unable to converge at all in normal operation.
+     *
+     * MechController polls at roughly 150 Hz; the camera runs at 40 fps. Most
+     * polls therefore land between frames, and any that come back without
+     * fiducials reset the counter to zero -- so REQUIRED_STABLE_FRAMES
+     * consecutive good frames never happened and raisedTarget stayed null
+     * forever, while HardwareCheck (which reads getFiducialResults() directly
+     * and skips this filter) showed the tags perfectly.
+     *
+     * Decrementing instead means a detection converges whenever good frames
+     * outnumber bad, which is what "stable" should have meant. The candidate
+     * is only discarded after LOST_FRAMES_TO_CLEAR consecutive misses, which
+     * is the real "the CELL is gone" signal.
+     */
     private void noteLost() {
-        candidate = null;
-        candidateFrames = 0;
         lastTagCount = 0;
-        if (++lostFrames >= LOST_FRAMES_TO_CLEAR) raisedTarget = null;
+        lostFrames++;
+        if (candidateFrames > 0) candidateFrames--;
+        if (lostFrames >= LOST_FRAMES_TO_CLEAR) {
+            candidate = null;
+            candidateFrames = 0;
+            raisedTarget = null;
+        }
     }
+
+    /** Filter progress, for telemetry: frames agreed out of those required. */
+    public int getCandidateFrames() { return candidateFrames; }
+    public int getLostFrames() { return lostFrames; }
+
+    /** Every fiducial ID the Limelight reported last frame, ours or not. */
+    private String lastRawIds = "";
+    private int lastRawCount = 0;
+    public String getLastRawIds() { return lastRawIds; }
+    public int getRawTagCount() { return lastRawCount; }
 
     public ShooterAdapter.Target getRaisedTarget() { return raisedTarget; }
     public boolean isTargetKnown() { return raisedTarget != null; }

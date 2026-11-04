@@ -101,6 +101,18 @@ public class HardwareCheck extends LinearOpMode {
         vision = new VisionController(robot, new ShooterAdapter(ShooterAdapter.Alliance.RED));
         vision.initAprilTag();
 
+        /*
+         * START THE LIMELIGHT TOO.
+         *
+         * This was missing, and it made the LIMELIGHT page permanently blank:
+         * getLatestResult() returns null until pipelineSwitch + start have
+         * been called, so the page reported "no result" no matter what the
+         * camera was pointed at. The TeleOps do this at init; the bench tool
+         * never did, so the one place you would go to ask "is the Limelight
+         * seeing a tag" could not answer.
+         */
+        vision.startHiveAprilTagPipeline();
+
         servos = new Servo[] { robot.turretRot, robot.hoodPollen, robot.hoodNectar,
                                robot.flowerIntake, robot.conveyorPollen, robot.conveyorNectar };
         servoNames = new String[] { "turretRot", "hoodPollen", "hoodNectar",
@@ -174,6 +186,13 @@ public class HardwareCheck extends LinearOpMode {
             case BEDS:
                 driveBeds();
                 note = "commanded " + BED_NAMES[bedPattern % 4];
+                break;
+            case LIMELIGHT:
+                // Re-issue unconditionally. The normal path skips the switch
+                // when it thinks it is already on 1, which is exactly the
+                // belief under suspicion.
+                vision.forcePipeline(sel % 10);
+                note = "forced pipeline " + (sel % 10) + " and restarted";
                 break;
             case SHOOTER:
                 openLoop = false;
@@ -774,15 +793,70 @@ public class HardwareCheck extends LinearOpMode {
 
     private void drawLimelight() {
         LLResult res = robot.limeLight.getLatestResult();
-        telemetry.addLine("Print a 36h11 tag, set pipeline 1 to AprilTag,");
-        telemetry.addLine("tag size 3.25 in (82.55 mm). Point the Limelight at it.");
+        telemetry.addLine("dpad U/D pick a pipeline index   A = FORCE it");
         telemetry.addLine("");
-        if (res == null) { telemetry.addLine("no result -- is the Limelight started?"); return; }
-        telemetry.addData("valid", res.isValid());
-        telemetry.addData("tx / ty", "%.2f / %.2f", res.getTx(), res.getTy());
+        telemetry.addData("index to force", sel % 10);
+        telemetry.addLine("");
+        /*
+         * SEPARATE THE THREE FAILURE MODES.
+         *
+         * "no tags" has three completely different causes and they need
+         * different fixes:
+         *
+         *   no result at all   -> the Limelight is not talking to the hub.
+         *                         Config name, cabling, power.
+         *   result but stale   -> it is connected but not processing.
+         *   result, 0 tags     -> it IS running, and pipeline 1 is almost
+         *                         certainly not an APRILTAG pipeline. That is
+         *                         configured on the Limelight's own web page,
+         *                         not from this code -- nothing here can set
+         *                         a pipeline's TYPE, only select its index.
+         */
+        /*
+         * isConnected() answers the question none of the other fields can:
+         * is the hub talking to the Limelight AT ALL?
+         *
+         * Everything else -- valid, tx, fiducials -- can read as "nothing
+         * there" for a camera that is perfectly healthy but simply not being
+         * polled. This separates a dead link from an empty frame.
+         */
+        telemetry.addData("connected", vision.isLimelightConnected());
+        telemetry.addData("last update", "%.2f s ago", vision.limelightAgeSec());
+        telemetry.addData("commanded pipeline", vision.getCurrentPipeline());
+        if (res == null) {
+            telemetry.addLine("NO RESULT -- the Limelight is not responding.");
+            telemetry.addLine("  check the config name is exactly 'limeLight',");
+            telemetry.addLine("  the ethernet cable, and that it has power.");
+            return;
+        }
+        /*
+         * WHICH PIPELINE IS ACTUALLY RUNNING.
+         *
+         * This is the decisive field when the web page shows tags and the hub
+         * does not. `commanded` is what pipelineSwitch() asked for; `running`
+         * is what the Limelight says it is doing. If they differ, the switch
+         * did not take -- and a colour pipeline returns valid=true with real
+         * tx/ty and an empty fiducial list forever, which looks exactly like
+         * a broken AprilTag pipeline.
+         *
+         * Selecting pipeline 1 in the WEB UI does not change what the robot
+         * commands at init.
+         */
+        telemetry.addData("running pipeline", res.getPipelineIndex());
+        // valid / tx / ty are about a PRIMARY TARGET and mean nothing for tag
+        // reading. An AprilTag pipeline happily reports IDs with valid=false
+        // and tx=ty=0. Shown for completeness; ignore them here.
+        telemetry.addData("valid / tx / ty", "%s  %.1f / %.1f   (not used)",
+                res.isValid(), res.getTx(), res.getTy());
         List<LLResultTypes.FiducialResult> tags = res.getFiducialResults();
         if (tags == null || tags.isEmpty()) {
-            telemetry.addLine("no fiducials in frame");
+            telemetry.addLine("");
+            telemetry.addLine("RESULT but NO FIDUCIALS.");
+            telemetry.addLine("  The Limelight is alive and processing.");
+            telemetry.addLine("  Open its web page and check that pipeline");
+            telemetry.addLine("  1 is of type APRILTAG, family 36h11.");
+            telemetry.addLine("  A colour pipeline returns results forever");
+            telemetry.addLine("  and never a single tag.");
         } else {
             StringBuilder ids = new StringBuilder();
             for (LLResultTypes.FiducialResult f : tags) ids.append(f.getFiducialId()).append(" ");
@@ -791,6 +865,13 @@ public class HardwareCheck extends LinearOpMode {
             telemetry.addLine("IDs coming through means the raised-CELL");
             telemetry.addLine("detection path works. 30-37 red, 38-45 blue.");
         }
+        telemetry.addLine("");
+        // The thing the TeleOp actually acts on. A tag seen here does not
+        // move the turret until the 4-frame filter agrees on it.
+        telemetry.addData("filtered target", "%s   (%d of our tags in view)",
+                vision.getRaisedTarget(), vision.getVisibleTagCount());
+        telemetry.addLine("THIS is what SHOOTING_HIVE aims at. 30-33 FAR,");
+        telemetry.addLine("34-37 AUDIENCE. Wrong one = wrong goal = no shot.");
     }
 
     private void drawPinpoint() {

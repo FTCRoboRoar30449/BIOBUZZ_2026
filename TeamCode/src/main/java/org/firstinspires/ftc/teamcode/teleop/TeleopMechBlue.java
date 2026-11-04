@@ -60,6 +60,9 @@ public class TeleopMechBlue extends OpMode {
         vision.initAprilTag();
         vision.startHiveAprilTagPipeline();
         mech.setState(MechState.START);
+        // Beds to the resting pattern now, not when an intake state is
+        // first entered. update() does not run until play is pressed.
+        mech.initPositions();
 
         // Commands the turret to forward and confirms on the limit switch.
         // Does not sweep; see TurretController for why.
