@@ -114,30 +114,30 @@ public class RobotHardware {
     public RobotHardware(HardwareMap hwMap, Telemetry telemetry) {
         this.telemetry = telemetry;
 
-        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot");
-        intakeMot = hwMap.get(DcMotor.class, "intakeMot");
+        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot"); // C3
+        intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E3
 
-        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot");
-        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot");
+        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E0
+        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // C0
 
-        turretRot = hwMap.get(Servo.class, "turretRot");
-        flowerIntake = hwMap.get(Servo.class, "flowerIntake");
-        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen");
-        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar");
-        hoodPollen = hwMap.get(Servo.class, "hoodPollen");
-        hoodNectar = hwMap.get(Servo.class, "hoodNectar");
+        turretRot = hwMap.get(Servo.class, "turretRot"); // C4
+        flowerIntake = hwMap.get(Servo.class, "flowerIntake"); // E2
+        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen"); // C2
+        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar"); // E4
+        hoodPollen = hwMap.get(Servo.class, "hoodPollen"); // C0
+        hoodNectar = hwMap.get(Servo.class, "hoodNectar"); // E0
 
-        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint");
-        imu = hwMap.get(IMU.class, "imu");
+        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); // CI2C Bus 1
+        imu = hwMap.get(IMU.class, "imu"); // CI2C Bus 0
 
-        sensorIntakeR = hwMap.get(RevColorSensorV3.class, "sensorIntakeR");
-        sensorIntakeL = hwMap.get(RevColorSensorV3.class, "sensorIntakeL");
-        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL");
-        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR");
-        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL");
-        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR");
+        sensorIntakeR = hwMap.get(RevColorSensorV3.class, "sensorIntakeR"); // EI2C Bus 0
+        sensorIntakeL = hwMap.get(RevColorSensorV3.class, "sensorIntakeL"); // EI2C Bus 1
+        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL"); // EI2C Bus 3
+        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR"); // EI2C Bus 2
+        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL"); // CI2C Bus 3
+        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR"); // CI2C Bus 2
 
-        magneticLimitSwitch = hwMap.get(DigitalChannel.class, "magneticLimitSwitch");
+        magneticLimitSwitch = hwMap.get(DigitalChannel.class, "magneticLimitSwitch"); // Digital Device C0
         magneticLimitSwitch.setMode(DigitalChannel.Mode.INPUT);
 
         camera = hwMap.get(WebcamName.class, "Webcam 1");
