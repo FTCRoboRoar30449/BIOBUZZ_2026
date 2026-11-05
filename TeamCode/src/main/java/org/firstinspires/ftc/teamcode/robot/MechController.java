@@ -394,6 +394,8 @@ public class MechController {
         serviceDeploy(nowMs);
         // Single owner for the scoop, by distance only. See serviceScoop().
         serviceScoop();
+        // Last word on the intake motor. See serviceIntakeLimit().
+        serviceIntakeLimit();
 
         // Watch both flywheels for the dip a departing ball causes. One loop
         // behind the state logic, which is harmless: a dip seen now is
@@ -510,8 +512,20 @@ public class MechController {
         // A new command is the driver's answer to a tipped CELL, so clear the
         // latch -- otherwise one tip would mute shooting for the whole match.
         cellTipped = false;
-        pollenExitsAtArm = pollenExits;
-        nectarExitsAtArm = nectarExits;
+        /*
+         * Zero the dip counters with shotsCompleted, not just re-baseline
+         * them.
+         *
+         * The telemetry shows the two witnesses side by side and the whole
+         * value of that line is that they cover the SAME window. shotsCompleted
+         * resets on every state change; pollenExits used to run for the whole
+         * OpMode. Two counters over different windows look like a disagreement
+         * on the very first state change, which is exactly the reading B16
+         * asks you to act on.
+         */
+        pollenExits = 0; nectarExits = 0;
+        pollenExitsAtArm = 0; nectarExitsAtArm = 0;
+        pollenDipLow = false; nectarDipLow = false;
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
             // scoop: serviceScoop() folds it once clear of the flower
@@ -581,6 +595,35 @@ public class MechController {
 
             case INTAKE_FIELD: {
                 /*
+                 * WATCH FOR THE TIP, FIRST.
+                 *
+                 * checkCellTipped() used to be called only from inside
+                 * serviceContinuousFire() -- that is, from behind the fire
+                 * gate. A tip is exactly what closes that gate: the raised
+                 * target becomes the far CELL, this position is no longer in
+                 * its zone, canFireFromHere() goes false and the tip check is
+                 * never reached. So while sweeping the field the tip went
+                 * undetected: no status, no note, nothing on the driver's
+                 * screen to say why the balls had stopped leaving.
+                 *
+                 * Only on a target vision actually saw. hiveTargetForPosition()
+                 * infers one from the zone, and an inference that flips as the
+                 * robot drives across a boundary is not a tip.
+                 *
+                 * Collecting continues through a tip unless TIP_STOPS_INTAKE
+                 * says otherwise -- the balls are still worth having when you
+                 * arrive at the other side.
+                 */
+                ShooterAdapter.Target seenCell = vision.getRaisedTarget();
+                if (seenCell != null && checkCellTipped(seenCell) && TIP_STOPS_INTAKE) {
+                    haltFlow();
+                    releaseWheels();
+                    stopIntake();
+                    resetFieldReject();
+                    setBedsUp();
+                    break;
+                }
+                /*
                  * FIRE WHILE SWEEPING THE FIELD, when the position allows it.
                  *
                  * Nothing used to shoot here -- INTAKE_FIELD only pre-spun and
@@ -602,7 +645,9 @@ public class MechController {
                  * did not need it until now.
                  *
                  * Falls back to pre-spin when not steady, so the wheels are
-                 * already up the moment the robot stops.
+                 * already up the moment the robot stops -- and pre-spin now
+                 * spins them back DOWN when its own gates fail, which is what
+                 * a tip makes happen.
                  */
                 if (FIRE_DURING_FIELD_INTAKE && canFireFromHere() && isSteadyEnoughToFire()) {
                     serviceContinuousFire(now, true);
@@ -876,6 +921,21 @@ public class MechController {
                  * Stop and keep the inventory for after the reposition.
                  */
                 if (checkCellTipped(tgt)) {
+                    /*
+                     * STOP THE FLYWHEELS TOO.
+                     *
+                     * This released the belt and set the phase idle but left
+                     * both shooters spinning. A tipped CELL means the robot
+                     * has to drive to the other side of the field before it
+                     * can score again -- seconds, not milliseconds -- so
+                     * holding them at speed burns battery and heats motors
+                     * for a shot that cannot happen from here.
+                     *
+                     * This is the opposite of the TARGET_UNKNOWN case just
+                     * below, where the cluster is briefly out of view and
+                     * spinning down would cost more than it saves.
+                     */
+                    stopShooterMotors();
                     stopFeedConveyor();
                     shotPhase = ShotPhase.IDLE;
                     break;
@@ -1059,22 +1119,28 @@ public class MechController {
     }
 
     private void servicePreSpin() {
-        if (!PRE_SPIN_ENABLED) return;
-        if (shotPhase != ShotPhase.IDLE) return;
-        if (totalBalls() <= 0 || !poseValid) return;
-        if (REQUIRE_HOMED && !turret.isHomed()) return;
+        if (!PRE_SPIN_ENABLED) { releaseWheels(); return; }
+        /*
+         * A real shot owns the wheels. This is the ONE gate that must not
+         * release them -- everything below is "pre-spin has no reason to be
+         * holding speed", which is a reason to spin DOWN.
+         */
+        if (shotPhase != ShotPhase.IDLE) { preSpinHoldUntilMs = 0; return; }
+        if (totalBalls() <= 0 || !poseValid) { releaseWheels(); return; }
+        if (REQUIRE_HOMED && !turret.isHomed()) { releaseWheels(); return; }
 
         // The cache is refreshed every loop by update(), so it is always
         // current and the stability filter is already converged.
         ShooterAdapter.Target tgt = vision.getRaisedTarget();
         if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
-        if (tgt == null || !shooter.inHiveZone(tgt, poseX, poseY)) return;
+        if (tgt == null || !shooter.inHiveZone(tgt, poseX, poseY)) { releaseWheels(); return; }
 
         ShooterAdapter.FirePlan plan = shooter.planHere(tgt, poseX, poseY, poseHeadingDeg);
-        if (!plan.valid) return;
+        if (!plan.valid) { releaseWheels(); return; }
 
         // Aim and spin, but do NOT advance shotPhase -- nothing is armed and
         // no ball is committed. The driver still decides when to fire.
+        preSpinHoldUntilMs = 0;
         preSpinning = true;
         ShooterAdapter.Shot s = countNectar > 0 ? plan.nectar : plan.pollen;
         double turretDeg = (plan.mode == ShooterAdapter.FireMode.SIMULTANEOUS)
@@ -1092,6 +1158,50 @@ public class MechController {
         }
     }
 
+    /**
+     * LET THE FLYWHEELS GO when nothing in INTAKE_FIELD wants them up.
+     *
+     * Every gate in servicePreSpin() used to be a bare `return`, which left
+     * whatever velocity was last commanded standing. In INTAKE_FIELD that is
+     * the only governor the wheels have, so once they were up nothing could
+     * bring them down again short of leaving the state -- they ran for the
+     * rest of the match.
+     *
+     * The case that exposed it: the CELL tips. The raised target becomes the
+     * far one, canFireFromHere() goes false (we are in the wrong zone for it),
+     * so the state falls to this branch, and pre-spin's own zone gate also
+     * fails -- it returned in silence with the wheels at full speed. That is
+     * "the shooting motor is not stopping even after the hive tips".
+     *
+     * It also catches the untuned-dip failure the same way. If DIP_ENTER never
+     * trips, countPollen never decrements, totalBalls() stays positive and
+     * pre-spin re-commands speed every loop on balls that are long gone. The
+     * inventory is still wrong, but the wheels now come down when the robot
+     * leaves the zone instead of running on a phantom.
+     *
+     * The grace window is there because the raised-target filter and the pose
+     * can both flicker for a loop or two, and spinning down and back up costs
+     * 1.7 s. Hold speed briefly, then let go.
+     */
+    public static long PRE_SPIN_RELEASE_MS = 750;
+    private long preSpinHoldUntilMs = 0;
+
+    private void releaseWheels() {
+        /*
+         * "Commanded", not "pre-spinning". serviceContinuousFire() clears
+         * preSpinning when it takes the wheels over, so keying off that flag
+         * would miss the exact handover this is for: firing while sweeping the
+         * field, the CELL tips, the fire gate closes, and the wheels are left
+         * running by the code that is no longer being called.
+         */
+        if (targetPollenTps <= 0 && targetNectarTps <= 0) { preSpinHoldUntilMs = 0; return; }
+        long now = System.currentTimeMillis();
+        if (preSpinHoldUntilMs == 0) { preSpinHoldUntilMs = now + PRE_SPIN_RELEASE_MS; return; }
+        if (now < preSpinHoldUntilMs) return;
+        preSpinHoldUntilMs = 0;
+        stopShooterMotors();        // clears preSpinning
+    }
+
     /** Turn pre-spin off if battery or motor temperature becomes a problem. */
     public static boolean PRE_SPIN_ENABLED = true;
     private boolean preSpinning = false;
@@ -1099,8 +1209,15 @@ public class MechController {
     // ---- ball-exit detection by flywheel RPM dip ---------------------------
     /*
      * A ball leaving takes energy out of the wheel and the velocity dips. That
-     * dip is the ONLY direct evidence a ball actually left -- belt travel only
+     * dip is the only DIRECT evidence a ball actually left -- belt travel only
      * proves the conveyor moved, which is equally true of a jam.
+     *
+     * It is nonetheless the SECOND witness, not the first. See
+     * countFlowByBeltTravel(): better evidence that rests on an unmeasured
+     * threshold is worse than weaker evidence that rests on a measured one.
+     * This runs every loop and counts into pollenExits / nectarExits so the
+     * two can be compared on the telemetry; it does not touch the inventory
+     * unless COUNT_FLOW_BY_DIP is set.
      *
      * Predicted from the flywheel energy budget (72 mm Rhino + 60 mm steel,
      * ~5.4 J at 2653 rpm):
@@ -1117,21 +1234,21 @@ public class MechController {
     public static double DIP_ENTER = 0.975;   // below this fraction of target = a ball went
     public static double DIP_EXIT  = 0.990;   // above this, re-arm for the next
     /*
-     * There is no "advisory mode" flag any more, and there was never really a
-     * choice to make.
+     * A DIP_COUNTS_BALLS flag used to sit here and was deleted, because it had
+     * stopped gating anything: continuous flow was dip-only, so the dip was
+     * authoritative whatever the flag said, and the telemetry went on
+     * reporting "advisory" while the dip drove the inventory. A switch that
+     * lies about what the code is doing is worse than no switch.
      *
-     * A DIP_COUNTS_BALLS switch used to sit here. It stopped gating anything
-     * once continuous flow arrived -- that mode has no discrete stroke to
-     * count, so the dip is its ONLY source of truth and must be authoritative
-     * there regardless. The flag survived in the telemetry string, which then
-     * cheerfully reported "advisory" while the dip was in fact driving the
-     * inventory. A switch that lies about what the code is doing is worse
-     * than no switch.
+     * COUNT_FLOW_BY_DIP is not that flag returning. It selects between two
+     * counters that both exist and both run, and the telemetry label changes
+     * with it. Belt travel is primary on both sides of it today:
      *
-     * So: the dip counts in continuous flow. Belt travel counts in the
-     * discrete shooting states. The two numbers are shown side by side so a
-     * disagreement is visible, which is the diagnostic the flag was pretending
-     * to offer.
+     *     discrete shooting states   belt travel, always (finishFeed)
+     *     continuous flow            belt travel, unless COUNT_FLOW_BY_DIP
+     *
+     * The dip counts alongside either way, and the two numbers sit next to
+     * each other on screen. That comparison is the measurement -- see B16.
      */
 
     private boolean pollenDipLow = false, nectarDipLow = false;
@@ -1160,7 +1277,11 @@ public class MechController {
         }
     }
 
-    /** Balls the flywheels say have left, since the OpMode started. */
+    /**
+     * Balls the flywheels say have left **since the current state began** --
+     * the same window `shotsCompleted` covers, so the two can be compared
+     * directly. Both are zeroed by setState().
+     */
     public int getPollenExits() { return pollenExits; }
     public int getNectarExits() { return nectarExits; }
 
@@ -1222,7 +1343,15 @@ public class MechController {
                 haltFlow(); return;
             }
             // A tipped CELL ends the volley -- see checkCellTipped().
-            if (checkCellTipped(tgt)) { haltFlow(); return; }
+            if (checkCellTipped(tgt)) {
+                // Same as the dedicated state: a tip means no shot is
+                // possible from here until the robot repositions, so the
+                // wheels come down rather than idling at speed.
+                haltFlow();
+                stopShooterMotors();
+                if (TIP_STOPS_INTAKE) stopIntake();
+                return;
+            }
             ShooterAdapter.FirePlan plan =
                     shooter.planHere(tgt, poseX, poseY, poseHeadingDeg);
             if (!plan.valid) {
@@ -1289,6 +1418,27 @@ public class MechController {
         robot.pollenShootingMot.setVelocity(targetPollenTps);
         operationStatus = OperationStatus.RUNNING;
 
+        /*
+         * NOTHING THIS MODE CAN ACTUALLY FIRE.
+         *
+         * The gate at the top only asks for SOMETHING in a hive volley, and
+         * that is not the same question. Holding nectar alone under a
+         * SEQUENTIAL plan leaves streamNectar false and the pollen tunnel
+         * empty: the belt would run, the pollen bed would be up over nothing,
+         * the nectar bed would be down over the balls we have, and the robot
+         * would sit there flowing for ever having fired nothing.
+         *
+         * Say so and hold. The dedicated SHOOTING_* states take nectar on its
+         * own; continuous flow is a pollen stream that nectar may ride along
+         * with when one turret angle happens to serve both.
+         */
+        if (countPollen <= 0 && !streamNectar) {
+            shotNote = "holding fire: nectar only, and this angle needs a "
+                     + "separate nectar volley";
+            haltFlow();
+            return;
+        }
+
         conveyorPollen(1);
         conveyorNectar(streamNectar ? 1 : 0);
 
@@ -1311,8 +1461,27 @@ public class MechController {
              * No ball is lost: the queue does not care that the motion it was
              * riding changed owner mid-stroke.
              */
+            // An index was mid-stroke and is being taken over. Its travel is
+            // not ours to count, so restart the measurement from here.
+            if (activeConveyor != ConveyorType.NONE) flowAnchorValid = false;
             activeConveyor = ConveyorType.NONE;
             conveyorTargetPosition = -1;
+            /*
+             * Anchor once per flow SESSION, not once per loop -- a per-loop
+             * anchor measures one loop of belt and never reaches a ball's
+             * worth.
+             *
+             * And not once per `flowing` either. `flowing` drops on every
+             * recovery pause, which happens immediately AFTER a ball leaves
+             * and the wheel sags. Re-anchoring there would throw away travel
+             * that was a hair short of a full ball and the count would run
+             * systematically low. The encoder holds its reading through the
+             * pause, so the partial carries over intact.
+             */
+            if (!flowAnchorValid) {
+                flowAnchorTicks = robot.conveyorMot.getCurrentPosition();
+                flowAnchorValid = true;
+            }
             flowing = true;
             robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             robot.conveyorMot.setPower(CONVEYOR_POWER);
@@ -1327,6 +1496,83 @@ public class MechController {
             return;
         }
 
+        countFlowByBeltTravel(hive);
+    }
+
+    /*
+     * ------------------------------------------------------------------------
+     * COUNTING BALLS OUT OF CONTINUOUS FLOW
+     *
+     * Two independent witnesses, and deliberately so:
+     *
+     *   BELT TRAVEL  (primary)   the conveyor has moved one ball's worth of
+     *                            ticks, so one ball has been pushed through
+     *   RPM DIP      (secondary) the flywheel lost speed, so something took
+     *                            energy out of it
+     *
+     * The dip used to be primary and the only witness. It is the better
+     * evidence in principle -- belt travel only proves the conveyor turned,
+     * which is equally true of a jam -- but it rests on DIP_ENTER being tuned
+     * to the real flywheel, and that measurement has not been taken. An
+     * untuned threshold does not fail safe: too loose and noise decrements the
+     * inventory for balls that never left, so the robot believes it is
+     * emptying while it fills, and the intake never reaches its 4-ball stop.
+     *
+     * Belt travel has no such failure mode on the bench. It is geometry and a
+     * tuned tick count, both of which can be measured without firing.
+     *
+     * So: belt travel drives the inventory. The dip runs alongside, counting
+     * into pollenExits / nectarExits, and the two are shown side by side on
+     * the telemetry. Once DIP_ENTER has been measured on the robot (B14) and
+     * the two agree over a volley, swap COUNT_FLOW_BY_DIP to true and the dip
+     * becomes primary again.
+     * ------------------------------------------------------------------------
+     */
+    /** false = belt travel counts (default). true = RPM dip counts. */
+    public static boolean COUNT_FLOW_BY_DIP = false;
+
+    private int flowAnchorTicks = 0;
+    private boolean flowAnchorValid = false;
+
+    private void countFlowByBeltTravel(boolean hive) {
+        if (COUNT_FLOW_BY_DIP) { countFlowByDip(hive); return; }
+
+        /*
+         * One ball's worth of belt is the same distance the discrete feed
+         * uses, so the two modes share a tuning constant rather than drifting
+         * apart. BOTH when the nectar bed is also engaged: one stroke pushes
+         * one ball out of each tunnel, not two out of the pollen tunnel.
+         */
+        int perBall = streamNectar ? TICKS_TO_SHOOT_BOTH : TICKS_TO_SHOOT_POLLEN;
+        if (perBall <= 0) return;
+
+        // Signed, and only forward travel counts. The belt is commanded one
+        // way in flow; a negative delta means an encoder glitch or a reversal
+        // from somewhere else, and neither is a ball.
+        int travelled = robot.conveyorMot.getCurrentPosition() - flowAnchorTicks;
+        while (travelled >= perBall) {
+            flowAnchorTicks += perBall;
+            travelled -= perBall;
+            if (countPollen > 0) {
+                countPollen--;
+                shotsCompleted++;
+                if (hive) cellPollenIn++;
+            }
+            // Nectar only while its bed is up -- a disengaged bed cannot have
+            // released anything, however far the belt ran.
+            if (streamNectar && countNectar > 0) {
+                countNectar--;
+                shotsCompleted++;
+                if (hive) cellNectarIn++;
+            }
+        }
+        // The dip counters keep running as the second opinion, but they must
+        // not bank a backlog while belt travel owns the inventory.
+        syncExitBaseline();
+    }
+
+    /** The old primary. Kept whole so the swap back is one flag. */
+    private void countFlowByDip(boolean hive) {
         // Count what actually left, not what the belt did. Each wheel reports
         // its own tunnel, so pollen and nectar are counted independently.
         int goneP = pollenExits - pollenExitsAtArm;
@@ -1368,6 +1614,11 @@ public class MechController {
     /** Stop the flow but leave the flywheels spinning. */
     private void haltFlow() {
         syncExitBaseline();
+        // End of the session, so the partial travel goes with it. Unlike the
+        // recovery pause inside serviceContinuousFire(), this means something
+        // refused the shot -- a tip, a lost pose, out of range -- and the belt
+        // will not simply resume where it left off.
+        flowAnchorValid = false;
         if (!flowing) return;
         flowing = false;
         robot.conveyorMot.setPower(0);
@@ -1435,6 +1686,20 @@ public class MechController {
         }
         return cellTipped;
     }
+
+    /**
+     * Should a tipped CELL also stop COLLECTING, not just shooting?
+     *
+     * A tip means no shot is possible until the robot repositions. It does
+     * NOT mean the flower in front of you has stopped being useful, so the
+     * default is to keep collecting -- the balls are still worth having when
+     * you arrive at the other side.
+     *
+     * Set true if you would rather the robot go quiet on a tip and wait for
+     * the driver. Only affects the combo flower states; the dedicated
+     * shooting states never run the intake anyway.
+     */
+    public static boolean TIP_STOPS_INTAKE = false;
 
     private boolean cellTipped = false;
 
@@ -1667,6 +1932,9 @@ public class MechController {
             conveyorNectar(1); conveyorPollen(0); ticks = TICKS_PER_NECTAR_STORAGE;
         } else return;
         conveyorTargetPosition = robot.conveyorMot.getCurrentPosition() + ticks;
+        // This stroke is an index, not a feed. Continuous flow must not read
+        // it as balls leaving the shooter.
+        flowAnchorValid = false;
         activeConveyor = type;
         robot.conveyorMot.setTargetPosition(conveyorTargetPosition);
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_TO_POSITION);
@@ -1801,6 +2069,37 @@ public class MechController {
                 || s == MechState.INTAKE_FLOWER_SHOOT_FLOWER;
     }
     private void stopIntake() { robot.intakeMot.setPower(0); }
+
+    /**
+     * A FULL ROBOT DOES NOT INTAKE. Last word, after every state.
+     *
+     * Each intake state already breaks out at `totalBalls() >= 4`, and that is
+     * still where the status and the reject tracking are handled. This is the
+     * backstop underneath it, and it exists because the per-state check is
+     * only as good as the inventory it reads: continuous flow decrements the
+     * count as it fires, so a miscount there -- a loose DIP_ENTER crediting
+     * balls that never left, a belt slipping past its tick budget -- makes the
+     * robot believe it has room it does not have. The intake keeps pulling,
+     * and the tunnel jams against balls already in it.
+     *
+     * The game cap and the pollen tunnel are both 4, so this is one test said
+     * two ways on purpose -- if either constant moves, the stricter one still
+     * holds. The NECTAR tunnel is deliberately NOT here: it holds 3, and a
+     * robot carrying 3 nectar still has room for a 4th ball as long as it is
+     * pollen. Turning a nectar away is `nectarTunnelFull()`'s job in
+     * INTAKE_FIELD, which reverses that one ball out rather than shutting the
+     * intake down.
+     *
+     * Runs AFTER serviceDeploy() so it is genuinely last, and skips while the
+     * arm is still swinging -- deployment drives the same motor, and a robot
+     * carrying four balls out of autonomous would otherwise never deploy.
+     */
+    private void serviceIntakeLimit() {
+        if (!deployDone) return;
+        if (totalBalls() >= 4 || countPollen >= POLLEN_TUNNEL_CAPACITY) {
+            stopIntake();
+        }
+    }
     /**
      * The ONLY way the scoop is commanded. Everything routes through here so
      * the "arm first, scoop second" rule cannot be bypassed by some other
@@ -1936,10 +2235,23 @@ public class MechController {
                 + (preSpinning ? "   [PRE-SPUN]" : "")
                 + (cellTipped ? "   [CELL TIPPED]" : "")
                 + (deployDone ? "" : "   [ARM STOWED]"));
-        // Dip count vs belt-travel count. Continuous flow is driven by the
-        // dip; the discrete states are driven by belt travel. Watch them
-        // track each other -- a growing gap means DIP_ENTER is mistuned.
-        telemetry.addData("Exits (RPM dip)", "pollen %d   nectar %d   (shots %d)",
+        /*
+         * THE TWO WITNESSES, SIDE BY SIDE. This line is the whole B16 test.
+         *
+         * `shots` is the inventory's own count and comes from BELT TRAVEL --
+         * primary everywhere now, continuous flow included. The dip columns
+         * are the second opinion, counted but not acted on.
+         *
+         * Watch them track each other over a volley. Dip running AHEAD means
+         * DIP_ENTER is too loose and noise is being read as balls; dip running
+         * BEHIND means it is too tight to see a real one. They agree when
+         * DIP_ENTER is right, and that is the moment COUNT_FLOW_BY_DIP is
+         * worth flipping.
+         */
+        telemetry.addData(
+                COUNT_FLOW_BY_DIP ? "Exits  dip=PRIMARY  belt=2nd"
+                                  : "Exits  belt=PRIMARY  dip=2nd",
+                "dip pollen %d   dip nectar %d   |   belt shots %d",
                 pollenExits, nectarExits, shotsCompleted);
         // Why a shot is or is not going out right now, in one line.
         /*
