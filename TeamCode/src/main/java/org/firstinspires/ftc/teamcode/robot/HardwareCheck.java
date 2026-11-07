@@ -388,18 +388,26 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.update();
     }
 
+    /*
+     * ---------------------------------------------------------------------
+     * SCREENS ARE FOR LIVE VALUES. The how-and-why lives in BENCH_TESTS.md.
+     *
+     * Every page used to print five to ten lines of prose explaining what to
+     * do and how to read it -- redrawn at loop rate, on a phone screen that
+     * shows about a dozen lines. The numbers you came to read were pushed
+     * off the bottom by the instructions telling you to read them.
+     *
+     * So each page is now: one control hint, the selection, the live values,
+     * and at most one line of interpretation where it is genuinely decisive.
+     * Nothing was deleted -- the prose moved to BENCH_TESTS.md, which is
+     * where you can actually read it while holding a gamepad.
+     * ---------------------------------------------------------------------
+     */
     private void drawDevices() {
-        telemetry.addLine("Every device resolved, or this OpMode would have");
-        telemetry.addLine("stopped at init with the offending name.");
+        telemetry.addLine("All 21 resolved, or init would have failed.");
         telemetry.addLine("");
-        telemetry.addLine("motors : intakeMot conveyorMot");
-        telemetry.addLine("         nectarShootingMot pollenShootingMot");
-        telemetry.addLine("servos : turretRot flowerIntake");
-        telemetry.addLine("         conveyorPollen conveyorNectar");
-        telemetry.addLine("         hoodPollen hoodNectar");
-        telemetry.addLine("sensors: 6x RevColorSensorV3, magneticLimitSwitch");
-        telemetry.addLine("vision : Webcam 1, limeLight");
-        telemetry.addLine("odo    : pinpoint, imu");
+        telemetry.addLine("4 motors  6 servos  6 colour  1 digital");
+        telemetry.addLine("Webcam 1  limeLight  pinpoint  imu");
     }
 
     private int servoIdx() { return sel % servos.length; }
@@ -442,14 +450,9 @@ public class HardwareCheck extends LinearOpMode {
                 MechController.bedPollenPos(true), MechController.bedPollenPos(false));
         telemetry.addData("nectar engaged / disengaged", "%.3f / %.3f",
                 MechController.bedNectarPos(true), MechController.bedNectarPos(false));
-        telemetry.addData("travel each", "%.3f / %.3f",
+        telemetry.addData("travel each", "%.3f / %.3f   (must match)",
                 Math.abs(MechController.bedPollenPos(true) - MechController.bedPollenPos(false)),
                 Math.abs(MechController.bedNectarPos(true) - MechController.bedNectarPos(false)));
-        telemetry.addLine("");
-        telemetry.addLine("THE TEST: step BOTH DISENGAGED <-> BOTH ENGAGED.");
-        telemetry.addLine("The two horns must sweep the SAME amount in");
-        telemetry.addLine("OPPOSITE directions. Same direction, or one");
-        telemetry.addLine("visibly further than the other, is a fault.");
     }
 
     private void stopDirectionMotors() {
@@ -487,22 +490,10 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addData("power", "%.2f", dirPower);
 
         DcMotor m = dirMotor();
-        int delta = m.getCurrentPosition() - dirZero;
-        telemetry.addData("encoder delta", delta);
-        if (dirIdx() == 0) {
-            telemetry.addLine("  (intakeMot's port reads the TURRET encoder,");
-            telemetry.addLine("   so this delta is not the intake shaft)");
-        }
+        telemetry.addData("encoder delta", m.getCurrentPosition() - dirZero);
+        if (dirIdx() == 0) telemetry.addLine("  (this port reads the TURRET encoder)");
         telemetry.addLine("");
-        telemetry.addLine("MARK THE SHAFT with tape, press A, and write down");
-        telemetry.addLine("which way it turns seen from the OUTPUT end.");
-        telemetry.addLine("Positive power should drive the mechanism's normal");
-        telemetry.addLine("direction: intake pulling IN, conveyor moving balls");
-        telemetry.addLine("TOWARD the shooter, flywheels throwing FORWARD.");
-        telemetry.addLine("");
-        telemetry.addLine("Y flips it live for checking. To make it stick, edit");
-        telemetry.addLine("RobotHardware.configureMotors() -- all four are");
-        telemetry.addLine("REVERSE there today.");
+        telemetry.addLine("Y is live only -- edit RobotHardware to keep it.");
     }
 
     /** Send the flower intake to whichever endpoint is currently selected. */
@@ -530,38 +521,15 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addData("servo now at", flowerAtScoop ? "SCOOP" : "REST");
 
         double span = Math.abs(MechController.FLOWER_SCOOP - MechController.FLOWER_REST);
-        if (span < 0.05) {
-            telemetry.addLine("");
-            telemetry.addLine("!! endpoints nearly equal -- the intake will");
-            telemetry.addLine("   barely move between rest and scoop");
-        } else if (span > 0.80) {
-            telemetry.addLine("");
-            telemetry.addLine("!! span over 0.80 -- near full servo travel.");
-            telemetry.addLine("   Fine loose on the bench, but do NOT bolt this");
-            telemetry.addLine("   to the winch without narrowing it first.");
-        }
-
-        telemetry.addData("span", "%.3f", span);
+        telemetry.addData("span", "%.3f%s", span,
+                span < 0.05 ? "   !! barely moves"
+                            : span > 0.80 ? "   !! near full travel - narrow before bolting on"
+                                          : "");
         telemetry.addLine("");
-        telemetry.addLine("SERVO LOOSE ON THE BENCH");
-        telemetry.addLine("  Nothing to hit, so nothing to measure. Use A/B to");
-        telemetry.addLine("  confirm it moves both ways and holds. Leave the");
-        telemetry.addLine("  span NARROW -- it is what protects the mechanism");
-        telemetry.addLine("  the first time the servo is bolted on.");
-        telemetry.addLine("");
-        telemetry.addLine("FITTED TO WINCH + SCOOP");
-        telemetry.addLine("  Creep each endpoint out and STOP the moment the");
-        telemetry.addLine("  scoop reaches its limit. Listen: a servo buzzing");
-        telemetry.addLine("  at rest is being held against a stop. Back off");
-        telemetry.addLine("  0.02 from wherever it buzzes.");
-        telemetry.addLine("  Span scales with pulley diameter -- a new pulley");
-        telemetry.addLine("  means re-deriving both numbers.");
-        telemetry.addLine("");
-        telemetry.addLine("Then paste into MechController:");
         telemetry.addLine(String.format(Locale.US,
-                "  FLOWER_REST = %.3f, FLOWER_SCOOP = %.3f;",
+                "FLOWER_REST = %.3f, FLOWER_SCOOP = %.3f;",
                 MechController.FLOWER_REST, MechController.FLOWER_SCOOP));
-        telemetry.addLine("These are NOT saved -- they reset when the OpMode ends.");
+        telemetry.addLine("NOT saved -- paste into MechController.");
     }
 
     private void drawServo() {
@@ -574,9 +542,7 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addLine("");
         telemetry.addData("commanded", "%.3f", servoPos);
         telemetry.addLine("");
-        telemetry.addLine("THE TEST: put a horn on it, press A then B.");
-        telemetry.addLine("  ~5 turns  -> PWM range applied, 1800 deg available");
-        telemetry.addLine("  ~1.7turns -> PWM range NOT applied, everything 1/3 scale");
+        telemetry.addLine("A then B: ~5 turns good, ~1.7 = no PWM range");
     }
 
     private void drawShooter() {
@@ -608,28 +574,19 @@ public class HardwareCheck extends LinearOpMode {
         // A number beats eyeballing a jittery readout. Real hunting shows as a
         // wide spread AND an audible surge; a steady hum with a wide spread is
         // just encoder quantisation at 28 cpr.
-        telemetry.addData("spread (2s)", "%.0f ticks/s   [%.0f .. %.0f]",
-                (vMax - vMin), vMin, vMax);
-        telemetry.addLine("  < 30  steady");
-        telemetry.addLine("  > 100 hunting -- drop P, and LISTEN: surge = real");
-        telemetry.addLine("");
+        // This number is test B14 and sets DIP_ENTER. Under 30 is steady;
+        // over 100 is hunting, so drop P.
+        telemetry.addData("spread (2s)", "%.0f ticks/s   [%.0f .. %.0f]  %s",
+                (vMax - vMin), vMin, vMax,
+                (vMax - vMin) < 30 ? "steady" : (vMax - vMin) > 100 ? "HUNTING" : "");
         if (openLoop) {
-            telemetry.addLine("FULL POWER free-run:");
-            telemetry.addData("  max seen", "%.0f ticks/s", observedMaxTps);
-            telemetry.addLine("  ~2800 -> 28 cpr confirmed (6000 rpm)");
-            telemetry.addLine("  ~1400 -> 14 cpr, or 2:1 geared");
-            telemetry.addLine("  ~5600 -> 56 cpr");
+            telemetry.addLine("");
+            telemetry.addData("free-run max", "%.0f ticks/s   (~2800 = 28 cpr)",
+                    observedMaxTps);
             if (observedMaxTps > 100) {
-                telemetry.addLine("");
-                telemetry.addData("  SUGGESTED F", "%.2f  (32767 / max)",
-                        32767.0 / observedMaxTps);
-                telemetry.addData("  SUGGESTED P", "%.2f  (0.1 x F)",
-                        0.1 * 32767.0 / observedMaxTps);
-                telemetry.addLine("  SUGGESTED I  0.1 x P     D  0");
+                telemetry.addData("suggested", "F %.2f   P %.2f   I 0.1xP   D 0",
+                        32767.0 / observedMaxTps, 0.1 * 32767.0 / observedMaxTps);
             }
-        } else {
-            telemetry.addLine("Closed loop settles ON target whatever the cpr");
-            telemetry.addLine("is -- press Y to actually test cpr and get F.");
         }
     }
 
@@ -669,14 +626,11 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addData("elapsed", elapsed + " ms");
         telemetry.addData("settled at", convSettleMs < 0 ? "not yet" : convSettleMs + " ms");
         telemetry.addLine("");
-        telemetry.addLine("WHAT GOOD LOOKS LIKE");
-        telemetry.addLine("  isBusy goes false within ~1s");
-        telemetry.addLine("  final error within a few ticks of 0");
-        telemetry.addLine("");
-        telemetry.addLine("If isBusy never clears, the feed phase will time out");
-        telemetry.addLine("instead of finishing. Drop power toward 0.2 and retry;");
-        telemetry.addLine("unloaded it overshoots and hunts at 0.65.");
-        telemetry.addLine("Feed distances in use: pollen 300, nectar 200, both 300.");
+        telemetry.addLine("Good: isBusy false inside ~1s, error near 0.");
+        telemetry.addData("feed distances", "pollen %d  nectar %d  both %d",
+                MechController.TICKS_TO_SHOOT_POLLEN,
+                MechController.TICKS_TO_SHOOT_NECTAR,
+                MechController.TICKS_TO_SHOOT_BOTH);
     }
 
     private void drawEncoder() {
@@ -689,20 +643,15 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addData("since zero", delta);
         telemetry.addData("implied deg", "%.1f  (at 8192 cpr)", delta * 360.0 / 8192.0);
         telemetry.addLine("");
-        telemetry.addLine("One full turn should read ~8192 (either sign).");
-        telemetry.addLine("Sign tells you ENCODER_SIGN once it is on the turret.");
-        telemetry.addLine("Zero movement -> not wired to this port.");
+        telemetry.addLine("One turn ~8192, either sign. 0 = not wired.");
     }
 
     private void drawDigital() {
-        boolean s = robot.magneticLimitSwitch.getState();
-        telemetry.addLine("Wave a magnet at the switch and watch this flip.");
+        telemetry.addLine("Wave a magnet at the switch.");
         telemetry.addLine("");
-        telemetry.addData("magneticLimitSwitch", s);
+        telemetry.addData("magneticLimitSwitch", robot.magneticLimitSwitch.getState());
         telemetry.addLine("");
-        telemetry.addLine("Whatever it reads WITH the magnet present is");
-        telemetry.addLine("TurretController.LIMIT_TRIGGERED_STATE.");
-        telemetry.addLine("This is fully answerable with no turret built.");
+        telemetry.addLine("Reading WITH magnet = LIMIT_TRIGGERED_STATE.");
     }
 
     private void drawColor() {
@@ -725,9 +674,7 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addData("rgb", "%d / %d / %d", r, g, bl);
         telemetry.addData("hsv", "%.1f / %.2f / %.2f", hsv[0], hsv[1], hsv[2]);
         telemetry.addLine("");
-        telemetry.addLine("expected: yellow H 80-110, red H 15-35, blue H 215-240");
-        telemetry.addLine("Write down what each REAL ball actually reads --");
-        telemetry.addLine("nectar has been misread as pollen before.");
+        telemetry.addLine("expect H: yellow 80-110  red 15-35  blue 215-240");
     }
 
     private void drawBalls() {
@@ -744,24 +691,16 @@ public class HardwareCheck extends LinearOpMode {
         telemetry.addLine("");
         // Measuring the ball beats guessing the gate. Hold one in the middle
         // of the view and set the window around what this actually reads.
-        telemetry.addData("CENTRE patch HSV", "H %.0f  S %.0f  V %.0f", c[0], c[1], c[2]);
-        telemetry.addLine("  hold a ball in the centre and read it here");
-        telemetry.addLine("  (OpenCV hue is 0-179, so HALVE any 0-360 value)");
-        telemetry.addLine("");
-
+        // Hue is 0-179 in OpenCV, so halve any 0-360 value you look up.
+        telemetry.addData("centre HSV", "H %.0f  S %.0f  V %.0f", c[0], c[1], c[2]);
         // Channel-order check. On a YELLOW ball ch0 and ch1 must both be high
         // and ch2 low; if ch0 is low and ch2 is high the frame is BGR and the
         // hue readout above is meaningless, not merely mis-gated.
-        telemetry.addData("CENTRE patch RAW", "ch0 %.0f  ch1 %.0f  ch2 %.0f",
-                raw[0], raw[1], raw[2]);
-        telemetry.addData("  reading as", BallDetector.FRAME_IS_BGR ? "BGR" : "RGB");
-        if (raw[0] + raw[1] + raw[2] > 30) {
-            boolean looksSwapped = raw[2] > raw[0] + 40;
-            telemetry.addLine(looksSwapped
-                    ? "  ch2 >> ch0: YELLOW here means SWAPPED -> flip with X"
-                    : "  ch0 >= ch2: consistent with yellow/red, not a swap");
-        }
-        telemetry.addLine("  X toggles RGB/BGR");
+        telemetry.addData("centre raw", "%.0f/%.0f/%.0f  as %s%s",
+                raw[0], raw[1], raw[2],
+                BallDetector.FRAME_IS_BGR ? "BGR" : "RGB",
+                (raw[0] + raw[1] + raw[2] > 30 && raw[2] > raw[0] + 40)
+                        ? "   !! looks SWAPPED, X to flip" : "");
         telemetry.addLine("");
         String[] lbl = { "colour", "H low", "H high", "S min", "V min" };
         double[] val = { ballTypeIdx, g[0], g[1], g[2], g[3] };
@@ -784,11 +723,7 @@ public class HardwareCheck extends LinearOpMode {
         } else {
             telemetry.addLine("nearest  none");
         }
-        telemetry.addLine("");
         telemetry.addData("fov", "H %.1f  V %.1f deg", bd.hfovDeg(), bd.vfovDeg());
-        telemetry.addLine("RANGE CHECK: camera 12.1 in up, 40 deg down,");
-        telemetry.addLine("ball on the floor at a measured distance --");
-        telemetry.addLine("nearest range should match your tape.");
     }
 
     private void drawLimelight() {
@@ -850,28 +785,22 @@ public class HardwareCheck extends LinearOpMode {
                 res.isValid(), res.getTx(), res.getTy());
         List<LLResultTypes.FiducialResult> tags = res.getFiducialResults();
         if (tags == null || tags.isEmpty()) {
-            telemetry.addLine("");
-            telemetry.addLine("RESULT but NO FIDUCIALS.");
-            telemetry.addLine("  The Limelight is alive and processing.");
-            telemetry.addLine("  Open its web page and check that pipeline");
-            telemetry.addLine("  1 is of type APRILTAG, family 36h11.");
-            telemetry.addLine("  A colour pipeline returns results forever");
-            telemetry.addLine("  and never a single tag.");
+            // Alive and processing, but no tags: almost always a pipeline
+            // that is not APRILTAG/36h11, or an ID filter excluding 30-45.
+            telemetry.addLine("RESULT but NO FIDUCIALS -- check pipeline type");
+            telemetry.addLine("is APRILTAG 36h11 and the ID filter is open.");
         } else {
             StringBuilder ids = new StringBuilder();
             for (LLResultTypes.FiducialResult f : tags) ids.append(f.getFiducialId()).append(" ");
             telemetry.addData("tag ids", ids.toString());
-            telemetry.addLine("");
-            telemetry.addLine("IDs coming through means the raised-CELL");
-            telemetry.addLine("detection path works. 30-37 red, 38-45 blue.");
         }
         telemetry.addLine("");
         // The thing the TeleOp actually acts on. A tag seen here does not
         // move the turret until the 4-frame filter agrees on it.
-        telemetry.addData("filtered target", "%s   (%d of our tags in view)",
+        telemetry.addData("filtered target", "%s   (%d ours in view)",
                 vision.getRaisedTarget(), vision.getVisibleTagCount());
-        telemetry.addLine("THIS is what SHOOTING_HIVE aims at. 30-33 FAR,");
-        telemetry.addLine("34-37 AUDIENCE. Wrong one = wrong goal = no shot.");
+        telemetry.addLine("RED 30-33 scoring / 34-37 audience");
+        telemetry.addLine("BLUE 42-45 scoring / 38-41 audience");
     }
 
     private void drawPinpoint() {
@@ -881,38 +810,23 @@ public class HardwareCheck extends LinearOpMode {
         // sit at 0 forever and look like dead hardware.
         robot.pinpoint.update();
 
-        telemetry.addLine("update() called HERE because no Pedro on the bench.");
-        telemetry.addLine("");
-
         // RAW COUNTS ARE THE DIAGNOSTIC. X/Y in inches depend on encoder
         // resolution and pod offsets, neither of which is configured yet, so
         // they can read 0 on perfectly good hardware. Raw ticks depend on
         // nothing but the pod being plugged in and turning.
-        telemetry.addData("device status", robot.pinpoint.getDeviceStatus());
-        telemetry.addData("raw pod X", robot.pinpoint.getEncoderX());
-        telemetry.addData("raw pod Y", robot.pinpoint.getEncoderY());
+        telemetry.addLine("Spin each pod by hand: raw counts must move.");
         telemetry.addLine("");
-        telemetry.addLine("SPIN EACH POD WHEEL BY HAND and watch raw counts:");
-        telemetry.addLine("  counts move  -> pod wired and read correctly.");
-        telemetry.addLine("               X/Y staying 0 is then only missing");
-        telemetry.addLine("               configuration, not broken hardware.");
-        telemetry.addLine("  counts STUCK -> that pod is not reaching the");
-        telemetry.addLine("               Pinpoint. Check the cable and which");
-        telemetry.addLine("               port it is in before anything else.");
+        telemetry.addData("device status", robot.pinpoint.getDeviceStatus());
+        telemetry.addData("raw pod X / Y", "%d / %d",
+                robot.pinpoint.getEncoderX(), robot.pinpoint.getEncoderY());
+        telemetry.addData("heading  pp / imu", "%.1f / %.1f deg",
+                robot.pinpoint.getHeading(AngleUnit.DEGREES),
+                robot.imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES));
         telemetry.addLine("");
         robot.addPinpointTelemetry(telemetry);
         telemetry.addLine("");
-        telemetry.addLine("X/Y in inches ALSO need setEncoderResolution(),");
-        telemetry.addLine("setOffsets() and setEncoderDirections(). None are");
-        telemetry.addLine("called yet -- the offsets are pod positions on a");
-        telemetry.addLine("robot that is not built, so that waits.");
-        telemetry.addLine("");
-        telemetry.addData("pinpoint heading", "%.1f deg",
-                robot.pinpoint.getHeading(AngleUnit.DEGREES));
-        telemetry.addData("hub imu yaw", "%.1f deg",
-                robot.imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.DEGREES));
-        telemetry.addLine("Rotate the whole Pinpoint board: its heading should");
-        telemetry.addLine("track. That IMU is independent of the pods.");
+        telemetry.addLine("X/Y inches still need resolution, offsets and");
+        telemetry.addLine("directions -- none set until the pods are mounted.");
     }
 
     // ---- helpers ----------------------------------------------------------

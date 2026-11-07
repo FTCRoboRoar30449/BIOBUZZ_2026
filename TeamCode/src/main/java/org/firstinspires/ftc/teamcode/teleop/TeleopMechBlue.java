@@ -13,10 +13,11 @@ import org.firstinspires.ftc.teamcode.robot.VisionController;
 /**
  * BLUE alliance mechanism TeleOp. Bench version: no drivetrain, no Pedro.
  *
- * The pose normally comes from follower.getPose(). Here it comes from the
- * Pinpoint if it is reporting, otherwise from BENCH_X/Y/HEADING so the
- * shooting FSMs can be exercised on a table. Swap updatePoseFromSource() for
- * the follower call when this moves onto the robot.
+ * The pose normally comes from follower.getPose(). Here it is FAKE: either a
+ * preset from the POSES table below, or BENCH_X/Y/HEADING. Nothing reads the
+ * Pinpoint -- an earlier version of this comment claimed it did, and it never
+ * has. Swap updatePoseFromSource() for the follower call when this moves onto
+ * the robot.
  *
  * CONTROLS
  *   gamepad1  A intake field   X intake flower   B idle   Y vision test
@@ -24,6 +25,7 @@ import org.firstinspires.ftc.teamcode.robot.VisionController;
  *             dpad left     bench: clear inventory to 0
  *             dpad right    bench: toggle INTAKE_FLOWER_SHOOT_HIVE /
  *                           INTAKE_FLOWER_SHOOT_FLOWER
+ *             back / LB     next / previous BENCH POSE preset
  *             RB drive to nearest ball (Batch 3 - not wired yet)
  *   gamepad2  A shoot hive     X shoot flower pollen   B idle
  *             Y shoot flower nectar (one ball)
@@ -37,8 +39,45 @@ import org.firstinspires.ftc.teamcode.robot.VisionController;
 @TeleOp(name = "TeleopMech BLUE", group = "Test")
 public class TeleopMechBlue extends OpMode {
 
-    /** Bench pose used when the Pinpoint is not reporting. PEDRO inches. */
+    /** Bench pose used when USE_POSE_PRESETS is false. PEDRO inches. */
     public static double BENCH_X = 90.0, BENCH_Y = 30.0, BENCH_HEADING_DEG = 182.7;
+
+    /*
+     * BENCH POSE PRESETS -- see TeleopMechRed for the reasoning.
+     *
+     * Only the two HIVE poses differ from the RED list: the blue hive zones
+     * are x 48-120 rather than 24-96. All four FLOWER poses are shared,
+     * because every flower is live for both alliances.
+     */
+    public static boolean USE_POSE_PRESETS = true;
+
+    private static final double[][] POSES = {
+        //    x,      y,  heading
+        {  90.0, 126.0,    2.7 },   // P3  hive SCORING_SIDE  (blue zone)
+        {  90.0,  30.0,  182.7 },   // P4  hive AUDIENCE_SIDE (blue zone)
+        {   4.0,  48.0,    0.0 },   // P5  flower red/audience, range 0
+        {  48.0, 140.0,    0.0 },   // P6  flower red/scoring
+        {  96.0,   4.0,    0.0 },   // P7  flower blue/audience
+        { 140.0,  96.0,    0.0 },   // P8  flower blue/scoring
+        {   4.0,  49.5,    0.0 },   // P9  1.5 in -- scoop AND intake
+        {   4.0,  52.0,    0.0 },   // P10 4.0 in -- scoop, no intake
+        {   4.0,  54.0,    0.0 },   // P11 6.0 in -- scoop folded
+        {  48.0,  40.0,    0.0 },   // P12 overlap, nearest = 4,48
+        {  96.0, 120.0,    0.0 },   // P13 overlap, nearest = 140,96
+        {  72.0,  72.0,    0.0 },   // P14 no zone at all
+        {  90.0, 100.0,    0.0 },   // P15 between the two blue hive zones
+        {   4.0,  96.0,    0.0 }    // P16 on the zone edge, inclusive
+    };
+    private static final String[] POSE_NAMES = {
+        "P3  hive SCORING_SIDE", "P4  hive AUDIENCE_SIDE",
+        "P5  flower red/aud",    "P6  flower red/scoring",
+        "P7  flower blue/aud",   "P8  flower blue/scoring",
+        "P9  1.5in scoop+intake","P10 4.0in scoop only",
+        "P11 6.0in folded",      "P12 overlap -> 4,48",
+        "P13 overlap -> 140,96", "P14 nowhere",
+        "P15 between zones",     "P16 zone edge"
+    };
+    private int poseIdx = 0;
 
     private RobotHardware robot;
     private MechController mech;
@@ -46,7 +85,7 @@ public class TeleopMechBlue extends OpMode {
     private ShooterAdapter shooter;
     private TurretController turret;
 
-    private boolean p1a, p1x, p1b, p1y, p1du, p1dd, p1dl, p1dr;
+    private boolean p1a, p1x, p1b, p1y, p1du, p1dd, p1dl, p1dr, p1bk, p1lb;
     private boolean p2a, p2x, p2b, p2y, p2du, p2dd, p2dl, p2rb;
     private boolean hivePipelineSelected = false;
 
@@ -129,6 +168,14 @@ public class TeleopMechBlue extends OpMode {
         p1du = gamepad1.dpad_up; p1dd = gamepad1.dpad_down;
         p1dl = gamepad1.dpad_left; p1dr = gamepad1.dpad_right;
 
+        // ---- bench pose preset -----------------------------------------
+        // The dpad is fully spoken for, so these live on back / LB.
+        boolean bk1 = gamepad1.back && !p1bk;
+        boolean lb1 = gamepad1.left_bumper && !p1lb;
+        if (bk1) poseIdx = (poseIdx + 1) % POSES.length;
+        if (lb1) poseIdx = (poseIdx + POSES.length - 1) % POSES.length;
+        p1bk = gamepad1.back; p1lb = gamepad1.left_bumper;
+
         // ---- gamepad2: shooting -----------------------------------------
         boolean a2 = gamepad2.a && !p2a, x2 = gamepad2.x && !p2x;
         boolean b2 = gamepad2.b && !p2b, y2 = gamepad2.y && !p2y;
@@ -158,6 +205,13 @@ public class TeleopMechBlue extends OpMode {
         p2dl = gamepad2.dpad_left; p2rb = gamepad2.right_bumper;
 
         mech.update();
+        // Before allTelemetry(), which calls telemetry.update() -- so this
+        // lands at the top of the screen where you are already looking.
+        telemetry.addData("Bench pose", USE_POSE_PRESETS
+                ? String.format("%s   (%.1f, %.1f @ %.0f)   back/LB to change",
+                        POSE_NAMES[poseIdx], POSES[poseIdx][0],
+                        POSES[poseIdx][1], POSES[poseIdx][2])
+                : "fixed BENCH_X/Y -- presets off");
         mech.allTelemetry();
     }
 
@@ -169,10 +223,14 @@ public class TeleopMechBlue extends OpMode {
      * is no conversion here.
      */
     private void updatePoseFromSource() {
-        mech.updatePose(BENCH_X, BENCH_Y, BENCH_HEADING_DEG);
+        double x = BENCH_X, y = BENCH_Y, h = BENCH_HEADING_DEG;
+        if (USE_POSE_PRESETS) {
+            x = POSES[poseIdx][0]; y = POSES[poseIdx][1]; h = POSES[poseIdx][2];
+        }
+        mech.updatePose(x, y, h);
         // The ball detector needs it too, or detections come back with NaN
         // field coordinates and nothing can path to them.
-        vision.setPose(BENCH_X, BENCH_Y, BENCH_HEADING_DEG);
+        vision.setPose(x, y, h);
     }
 
     @Override public void stop() {

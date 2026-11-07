@@ -290,13 +290,13 @@ public class VisionController {
 
         // Majority vote across whichever of our tags are in frame. A cluster
         // is four tags, so a single misread never decides anything.
-        int farVotes = 0, audVotes = 0, seen = 0, firstId = -1;
+        int scoringVotes = 0, audVotes = 0, seen = 0, firstId = -1;
         for (LLResultTypes.FiducialResult f : tags) {
             ShooterAdapter.Target t = shooter.targetForTagId(f.getFiducialId());
             if (t == null) continue;          // other alliance, or a wall tag
             seen++;
             if (firstId < 0) firstId = f.getFiducialId();
-            if (t == ShooterAdapter.Target.FAR_SIDE) farVotes++; else audVotes++;
+            if (t == ShooterAdapter.Target.SCORING_SIDE) scoringVotes++; else audVotes++;
         }
         lastTagCount = seen;
 
@@ -304,11 +304,27 @@ public class VisionController {
         lastSeenTagId = firstId;
         lostFrames = 0;
 
-        ShooterAdapter.Target vote = farVotes >= audVotes
-                ? ShooterAdapter.Target.FAR_SIDE : ShooterAdapter.Target.AUDIENCE_SIDE;
+        ShooterAdapter.Target vote = scoringVotes >= audVotes
+                ? ShooterAdapter.Target.SCORING_SIDE : ShooterAdapter.Target.AUDIENCE_SIDE;
 
         if (vote == candidate) {
-            candidateFrames++;
+            /*
+             * CLAMPED at the threshold. It used to run away -- measured 290
+             * on the field, against a requirement of 4.
+             *
+             * Harmless to the LOCK, because the hard clear is driven by
+             * lostFrames, not by this decaying back under the threshold. But
+             * it ruins the thing the telemetry line exists for. "290/4" is
+             * not a gauge, and worse, a genuinely flickering signal that
+             * alternates good and bad frames sits up at 290 and reports rock
+             * solid confidence it does not have.
+             *
+             * Clamped, a steady lock reads 4/4 and a flickering one visibly
+             * hovers below it -- and recovery after a miss starts from 4
+             * rather than from several hundred, so the gauge tracks what the
+             * camera is doing right now.
+             */
+            if (candidateFrames < REQUIRED_STABLE_FRAMES) candidateFrames++;
         } else {
             candidate = vote;
             candidateFrames = 1;

@@ -46,8 +46,12 @@ public final class ShooterRed {
 
     /** Which red CELL is currently raised. Indexes every per-target array. */
     public enum Target {
-        /** Far side of the field, +Y, opposite the audience. Tags 30-33. */
-        FAR_SIDE,
+        /**
+         * Far side of the field, +Y, opposite the audience. Tags 30-33.
+         * Named SCORING_SIDE; MUST stay first, as every per-target array
+         * below is indexed by ordinal().
+         */
+        SCORING_SIDE,
         /** Audience side of the field, -Y. Tags 34-37. */
         AUDIENCE_SIDE
     }
@@ -110,7 +114,7 @@ public final class ShooterRed {
 
     /** Which red target a detected tag belongs to, or null if not ours. */
     public static Target targetForTagId(int id) {
-        if (id >= 30 && id <= 33) return Target.FAR_SIDE;
+        if (id >= 30 && id <= 33) return Target.SCORING_SIDE;
         if (id >= 34 && id <= 37) return Target.AUDIENCE_SIDE;
         return null;
     }
@@ -538,11 +542,11 @@ public final class ShooterRed {
  * ---------------------------------------------------------------------------
  * USAGE
  *
- *   Target tgt = BioBuzzShooterRed.Target.FAR_SIDE;     // whichever CELL is up
+ *   Target tgt = BioBuzzShooterRed.Target.SCORING_SIDE;     // whichever CELL is up
  *   // or resolve it from a detection:
  *   // Target tgt = BioBuzzShooterRed.targetForTagId(det.id);
  *
- *   Target tgt = BioBuzzShooterRed.Target.FAR_SIDE;   // whichever CELL is up
+ *   Target tgt = BioBuzzShooterRed.Target.SCORING_SIDE;   // whichever CELL is up
  *
  *   // x, y, yawNow come straight from Pedro / the Pinpoint -- no conversion.
  *   Pose pose = follower.getPose();

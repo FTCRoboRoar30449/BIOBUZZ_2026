@@ -525,7 +525,9 @@ public class MechController {
          */
         pollenExits = 0; nectarExits = 0;
         pollenExitsAtArm = 0; nectarExitsAtArm = 0;
-        pollenDipLow = false; nectarDipLow = false;
+        // DISARMED, not armed -- a state change is not evidence either wheel
+        // is at speed, and an armed latch would book the next spin-up.
+        pollenDipLow = true; nectarDipLow = true;
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
             // scoop: serviceScoop() folds it once clear of the flower
@@ -815,7 +817,26 @@ public class MechController {
                  *
                  * Only plain INTAKE_FLOWER, which never fires, sets them here.
                  */
-                if (state == MechState.INTAKE_FLOWER) setBedsUp();
+                /*
+                 * BEDS: owned here, by `flowing`, not by state.
+                 *
+                 * This used to be `if (state == INTAKE_FLOWER) setBedsUp()`,
+                 * leaving the combo states to have their beds set as a side
+                 * effect of serviceContinuousFire() reaching its
+                 * conveyorPollen()/conveyorNectar() calls. It does not always
+                 * reach them: every refusal in there -- turret not homed, no
+                 * pose, nothing to shoot, no CELL in view, a tip, no valid
+                 * plan, nectar-only -- returns early. A combo state that
+                 * cannot fire therefore left both beds wherever the last flow
+                 * happened to leave them, which for a pollen-only stream is
+                 * nectar DISENGAGED. An arriving nectar then had nowhere to
+                 * be indexed to.
+                 *
+                 * Same rule as INTAKE_FIELD now: whenever we are not
+                 * streaming, the beds go to the known resting pattern. Placed
+                 * AFTER the fire call so it reads this loop's `flowing`, not
+                 * last loop's.
+                 */
                 // Scoop is serviceScoop()'s job now -- same distances, one owner.
                 if (!atFlower) {
                     // Approaching, not there yet. Do not run the intake -- but
@@ -826,6 +847,7 @@ public class MechController {
                         serviceContinuousFire(now,
                                 state == MechState.INTAKE_FLOWER_SHOOT_HIVE);
                     }
+                    if (!flowing) setBedsUp();
                     break;
                 }
 
@@ -848,6 +870,7 @@ public class MechController {
                 if (state != MechState.INTAKE_FLOWER) {
                     serviceContinuousFire(now, state == MechState.INTAKE_FLOWER_SHOOT_HIVE);
                 }
+                if (!flowing) setBedsUp();
 
                 int color = intakeColor();
                 if (rejectingFlowerNectar) {
@@ -1251,7 +1274,27 @@ public class MechController {
      * each other on screen. That comparison is the measurement -- see B16.
      */
 
-    private boolean pollenDipLow = false, nectarDipLow = false;
+    /*
+     * THE LATCH STARTS DISARMED, AND "DISARMED" IS `true`.
+     *
+     * It used to start false, which meant armed, and that counted a phantom
+     * ball on EVERY spin-up. The moment targetPollenTps is set the wheel is
+     * still at rest, so r is about 0 -- far below DIP_ENTER -- and the latch
+     * tripped before anything had turned, let alone been fired. Measured on
+     * the field 5 Nov: enter INTAKE_FIELD with no balls anywhere near the
+     * robot and `dip pollen` reads 1.
+     *
+     * Starting true reads as "we have not seen this wheel at speed yet", so
+     * the opening climb falls through to the DIP_EXIT branch and merely ARMS
+     * the detector. Only a dip from a wheel already at speed counts.
+     *
+     * Belt travel owns the inventory today, so the old behaviour cost only a
+     * misleading telemetry column -- but it also made B16's whole comparison
+     * meaningless, since the dip ran exactly one high per volley. Under
+     * COUNT_FLOW_BY_DIP it would be a real off-by-one draining the inventory
+     * early on every spin-up.
+     */
+    private boolean pollenDipLow = true, nectarDipLow = true;
     private int pollenExits = 0, nectarExits = 0;
     private int pollenExitsAtArm = 0, nectarExitsAtArm = 0;
 
@@ -1266,14 +1309,16 @@ public class MechController {
             if (!pollenDipLow && r < DIP_ENTER) { pollenDipLow = true; pollenExits++; }
             else if (pollenDipLow && r > DIP_EXIT) pollenDipLow = false;
         } else {
-            pollenDipLow = false;
+            // Wheel not commanded: disarm, so the next spin-up has to reach
+            // speed before anything it does can count.
+            pollenDipLow = true;
         }
         if (targetNectarTps > 0) {
             double r = robot.nectarShootingMot.getVelocity() / targetNectarTps;
             if (!nectarDipLow && r < DIP_ENTER) { nectarDipLow = true; nectarExits++; }
             else if (nectarDipLow && r > DIP_EXIT) nectarDipLow = false;
         } else {
-            nectarDipLow = false;
+            nectarDipLow = true;      // disarmed -- see pollen above
         }
     }
 
@@ -2224,127 +2269,173 @@ public class MechController {
      */
     public static boolean COMPACT_TELEMETRY = true;
 
+    /**
+     * WHY a shot is or is not going out, in one short phrase.
+     *
+     * This replaces four separate lines -- Fire gate, Shot phase, Note and
+     * half of Target -- that between them made you reconstruct the answer
+     * from parts. The question is always the same one ("why is nothing
+     * coming out?") and it now has a single place to look.
+     *
+     * Ordered by how far along the chain the refusal sits, so the FIRST
+     * thing that would stop a shot is the thing reported. A turret that is
+     * not homed makes everything below it irrelevant.
+     *
+     * Pure: inFiringPosition() and isSteadyEnoughToFire() are both read-only
+     * by design. Nothing here may change state -- telemetry that mutates is
+     * how the cellTipped latch became unreachable once already.
+     */
+    private String whyLine() {
+        if (!turret.isHomed())      return "turret NOT HOMED";
+        if (!deployDone)            return "arm still stowed";
+        if (flowing)                return "FIRING";
+        if (shotPhase != ShotPhase.IDLE) return shotPhase + " " + activeShotBall;
+        if (cellTipped)             return "CELL TIPPED - reposition";
+        if (!poseValid)             return "no pose";
+        if (totalBalls() <= 0)      return "empty";
+        if (!shotNote.isEmpty())    return shotNote;
+        if (!inFiringPosition())    return "not in a hive zone for this target";
+        if (!isSteadyEnoughToFire())
+            return String.format("moving %.1f in/s - holding", speedInPerSec);
+        if (preSpinning)            return "pre-spun, ready";
+        return "ready";
+    }
+
+    /*
+     * ONE SCREEN, SEVEN LINES.
+     *
+     * The compact screen had grown to sixteen lines of fields, which is past
+     * what anyone reads while driving -- and past what the Driver Station
+     * shows without scrolling, so the bottom ones were decoration.
+     *
+     * Grouped by the QUESTION each answers rather than by which object the
+     * value came from:
+     *
+     *   STATE   what is it doing
+     *   BALLS   what is it holding, and what has left
+     *   WHY     why is nothing coming out        <- the line you actually want
+     *   WHERE   where does it think it is, aimed at what
+     *   VISION  what does the camera have
+     *   BELT    what are the conveyor and beds doing
+     *   LOOP    is it keeping up
+     *
+     * Anything that is only interesting when WRONG is not a line at all --
+     * it joins the single "!!" alert line, which is absent when all is well.
+     * A flag that is always on screen stops being read.
+     *
+     * COMPACT_TELEMETRY = false still appends the full diagnostic page.
+     */
     public void allTelemetry() {
-        // The numbers you are reading off the screen go FIRST, so they cannot
-        // be pushed out of view by anything added below them later.
-        telemetry.addData("State", currentState + "  /  " + operationStatus);
-        telemetry.addData("Inventory", "pollen %d   nectar %d   total %d",
-                countPollen, countNectar, totalBalls());
-        telemetry.addData("Shot phase", shotPhase + "  " + activeShotBall
-                + (flowing ? "   [FLOWING]" : "")
-                + (preSpinning ? "   [PRE-SPUN]" : "")
-                + (cellTipped ? "   [CELL TIPPED]" : "")
-                + (deployDone ? "" : "   [ARM STOWED]"));
+        telemetry.addData("STATE ", "%s / %s", currentState, operationStatus);
         /*
-         * THE TWO WITNESSES, SIDE BY SIDE. This line is the whole B16 test.
-         *
-         * `shots` is the inventory's own count and comes from BELT TRAVEL --
-         * primary everywhere now, continuous flow included. The dip columns
-         * are the second opinion, counted but not acted on.
-         *
-         * Watch them track each other over a volley. Dip running AHEAD means
-         * DIP_ENTER is too loose and noise is being read as balls; dip running
-         * BEHIND means it is too tight to see a real one. They agree when
-         * DIP_ENTER is right, and that is the moment COUNT_FLOW_BY_DIP is
-         * worth flipping.
+         * Inventory and both exit counters on one line. `shots` is belt
+         * travel and drives the inventory; `dip` is the second witness,
+         * counted but not acted on. Watching them diverge IS test B16 --
+         * dip ahead means DIP_ENTER is too loose, behind means too tight.
          */
-        telemetry.addData(
-                COUNT_FLOW_BY_DIP ? "Exits  dip=PRIMARY  belt=2nd"
-                                  : "Exits  belt=PRIMARY  dip=2nd",
-                "dip pollen %d   dip nectar %d   |   belt shots %d",
-                pollenExits, nectarExits, shotsCompleted);
-        // Why a shot is or is not going out right now, in one line.
+        telemetry.addData("BALLS ", "P%d N%d = %d/4    shots %d  dip %d%s",
+                countPollen, countNectar, totalBalls(),
+                shotsCompleted, pollenExits + nectarExits,
+                COUNT_FLOW_BY_DIP ? "  (DIP IS PRIMARY)" : "");
+        telemetry.addData("WHY   ", whyLine());
         /*
-         * Pose and target belong on the COMPACT screen.
+         * Pose and target together: they are two halves of one question, and
+         * reading them apart is what made "the turret aims somewhere odd"
+         * hard to pin on the pose.
          *
-         * Nearly every "why is it not shooting" question comes down to one of
-         * three things: the robot is not where you think, the target is not
-         * the CELL you think, or the range is outside the table. All three are
-         * invisible unless you switch to full telemetry, which is exactly when
-         * you are least likely to think of it.
+         * `(by zone)` is a GUESS. Geometry can say which CELL is SHOOTABLE
+         * from here; it cannot say which is RAISED -- that is game state and
+         * only a tag reports it. Kept anyway, because the fallback is what
+         * stops a dead camera from stopping the robot scoring.
          */
-        telemetry.addData("Pose", poseValid
-                ? String.format("%.0f, %.0f @ %.0f deg", poseX, poseY, poseHeadingDeg)
-                : "NOT SET");
         ShooterAdapter.Target seen = vision.getRaisedTarget();
-        telemetry.addData("Target", "%s%s",
+        telemetry.addData("WHERE ", "%s    %s%s",
+                poseValid ? String.format("%.0f,%.0f @%.0f",
+                                          poseX, poseY, poseHeadingDeg)
+                          : "POSE NOT SET",
                 seen != null ? seen + " (tag)"
                              : String.valueOf(shooter.hiveTargetForPosition(poseX, poseY)),
                 seen == null ? " (by zone)" : "");
         /*
-         * RAW tag IDs, unfiltered. This is what separates "the camera sees
-         * nothing" from "the camera sees a tag that is not ours".
-         *
-         * targetForTagId() accepts only 30-37 for RED and 38-45 for BLUE.
-         * Any other ID is counted by the Limelight, listed by HardwareCheck,
-         * and then dropped here -- producing "(by zone)" with a tag plainly
-         * in view, which looks exactly like a dead camera.
+         * Raw IDs are what separate "the camera sees nothing" from "the
+         * camera sees a tag that is not ours" -- targetForTagId() accepts
+         * only 30-37 for RED and 38-45 for BLUE, and anything else is
+         * counted, listed, then dropped, which looks exactly like a dead
+         * camera. `lock` stuck below 4 with tags arriving means intermittent
+         * detection.
          */
-        telemetry.addData("Tags seen", "%d raw [%s]   %d ours",
+        telemetry.addData("VISION", "%d tags [%s] %d ours   lock %d/%d   flower %d  pipe %d",
                 vision.getRawTagCount(),
-                vision.getLastRawIds().isEmpty() ? "none" : vision.getLastRawIds(),
-                vision.getVisibleTagCount());
-        // Filter progress. Tags arriving but this stuck near 0 means the
-        // detection is intermittent and confidence is being lost as fast as
-        // it is gained -- which is what the old reset-to-zero guaranteed.
-        telemetry.addData("Tag filter", "%d/%d agreed   %d lost",
+                vision.getLastRawIds().isEmpty() ? "-" : vision.getLastRawIds(),
+                vision.getVisibleTagCount(),
                 vision.getCandidateFrames(), VisionController.REQUIRED_STABLE_FRAMES,
-                vision.getLostFrames());
-        /*
-         * Bed sensors and conveyor state, on the COMPACT screen.
-         *
-         * The beds only split when a BED sensor sees a ball and
-         * updateConveyor() starts a transfer. Four separate conditions can
-         * silently stop that -- full inventory, a transfer already running,
-         * continuous flow owning the belt, or simply no ball at the sensor --
-         * and none of them were visible. "The opposite servo did not move"
-         * could be any of them.
-         */
-        telemetry.addData("Bed sees", "pollen %s   nectar %s",
-                pollenBedSeen ? "BALL" : "-", nectarBedSeen ? "BALL" : "-");
-        telemetry.addData("Index", "%s%s", activeConveyor,
-                activeConveyor != ConveyorType.NONE
-                        ? "  busy " + robot.conveyorMot.isBusy()
-                        : (totalBalls() >= 4 ? "   (BLOCKED: 4 balls)"
-                           : flowing ? "   (BLOCKED: flowing)" : ""));
-        telemetry.addData("Fire gate", "%s   %.1f in/s %s",
-                inFiringPosition() ? "in zone" : "no zone/target",
-                speedInPerSec,
-                isSteadyEnoughToFire() ? "steady" : "MOVING - holding fire");
-        telemetry.addData("Phase ms", "aim %d  spin %d  feed %d  -> cycle %d",
-                lastAimMs, lastSpinMs, lastFeedMs, lastCycleMs);
-        telemetry.addData("Loop ms", "%.1f avg   %.0f worst   (%.0f Hz)",
-                loopMsAvg, loopMsWorst, loopMsAvg > 0 ? 1000.0 / loopMsAvg : 0);
-        telemetry.addData("Shots completed", shotsCompleted);
-        // ALWAYS shown, not just in the flower states. It was gated to them at
-        // first, which made it impossible to tell a missing build from a line
-        // that simply was not drawn yet. -1 means the camera has not started.
-        // Pipeline is here so it can be watched while the FSM changes state:
-        // it must stay 1 through a flower collection, not drop back to 4.
-        telemetry.addData("Pollen seen (cam)", "%d   (LL pipeline %d)",
                 vision.getFlowerPollenCount(), vision.getCurrentPipeline());
-        if (!shotNote.isEmpty()) telemetry.addData("Note", shotNote);
+        /*
+         * Beds and index together. A transfer can fail to start for four
+         * different reasons and none of them used to be visible, so "the
+         * opposite servo did not move" could be any of them.
+         */
+        telemetry.addData("BELT  ", "beds P:%s N:%s   idx %s%s",
+                pollenBedSeen ? "BALL" : "-", nectarBedSeen ? "BALL" : "-",
+                activeConveyor,
+                activeConveyor != ConveyorType.NONE
+                        ? " busy " + robot.conveyorMot.isBusy()
+                        : (totalBalls() >= 4 ? " BLOCKED:full"
+                           : flowing ? " BLOCKED:flowing" : ""));
+        telemetry.addData("LOOP  ", "%.1fms  %.0fHz   worst %.0f",
+                loopMsAvg, loopMsAvg > 0 ? 1000.0 / loopMsAvg : 0, loopMsWorst);
 
-        // A hood calibration whose 55-80 sweep runs off the end of the servo's
-        // 0..1 range clamps SILENTLY -- every commanded hood angle comes out
-        // wrong and nothing says so. HoodMap has always been able to detect
-        // this; nothing ever asked it. Costs one comparison when correct.
-        if (!HoodMap.pollenRangeFits() || !HoodMap.nectarRangeFits()) {
-            telemetry.addData("!! HOOD RANGE", "%s%s -- angles are being clamped",
-                    HoodMap.pollenRangeFits() ? "" : "POLLEN ",
-                    HoodMap.nectarRangeFits() ? "" : "NECTAR ");
-        }
+        /*
+         * THE ALERT LINE. Absent entirely when nothing is wrong.
+         *
+         * [CELL TIPPED] and [TURRET NOT HOMED] also reach WHY, which is where
+         * you will see them first; they are repeated here so a glance at the
+         * bottom of the screen catches them while WHY is showing something
+         * further down the chain.
+         *
+         * A hood calibration whose 55-80 sweep runs off the end of the
+         * servo's 0..1 range clamps SILENTLY -- every commanded angle comes
+         * out wrong and nothing says so. Costs one comparison when correct.
+         */
+        String alerts = "";
+        if (cellTipped)                 alerts += "[CELL TIPPED] ";
+        if (!turret.isHomed())          alerts += "[TURRET NOT HOMED] ";
+        if (!deployDone)                alerts += "[ARM STOWED] ";
+        if (!HoodMap.pollenRangeFits()) alerts += "[POLLEN HOOD CLAMPED] ";
+        if (!HoodMap.nectarRangeFits()) alerts += "[NECTAR HOOD CLAMPED] ";
+        if (!alerts.isEmpty()) telemetry.addData("!!    ", alerts.trim());
 
         if (COMPACT_TELEMETRY) {
             telemetry.update();
             return;
         }
 
+        // ---- full diagnostic page ------------------------------------------
+        // Everything the compact screen merged or dropped, at full precision.
+        telemetry.addLine();
+        telemetry.addData("Shot phase", "%s %s%s%s", shotPhase, activeShotBall,
+                flowing ? "  [FLOWING]" : "", preSpinning ? "  [PRE-SPUN]" : "");
+        telemetry.addData("Exits", "%s  dip pollen %d  dip nectar %d  belt shots %d",
+                COUNT_FLOW_BY_DIP ? "dip=PRIMARY" : "belt=PRIMARY",
+                pollenExits, nectarExits, shotsCompleted);
+        telemetry.addData("Fire gate", "%s   %.1f in/s  %.1f deg/s  %s",
+                inFiringPosition() ? "in zone" : "no zone/target",
+                speedInPerSec, turnDegPerSec,
+                isSteadyEnoughToFire() ? "steady" : "MOVING");
+        telemetry.addData("Tag filter", "%d/%d agreed   %d lost",
+                vision.getCandidateFrames(), VisionController.REQUIRED_STABLE_FRAMES,
+                vision.getLostFrames());
+        telemetry.addData("Phase ms", "aim %d  spin %d  feed %d  -> cycle %d",
+                lastAimMs, lastSpinMs, lastFeedMs, lastCycleMs);
+        if (!shotNote.isEmpty()) telemetry.addData("Note", shotNote);
+
         telemetry.addLine();
         telemetry.addData("Alliance", shooter.getAlliance());
         telemetry.addData("Operation Complete", isOperationComplete());
         telemetry.addLine();
-        telemetry.addData("Pose", poseValid
+        // Pose is on WHERE already; this is the same number to one more
+        // decimal, for when you are chasing a disagreement with a tape.
+        telemetry.addData("Pose exact", poseValid
                 ? String.format("%.1f, %.1f @ %.1f deg", poseX, poseY, poseHeadingDeg)
                 : "NOT SET - OpMode must call updatePose()");
         telemetry.addData("Raised CELL", vision.getRaisedTarget() == null
@@ -2372,12 +2463,10 @@ public class MechController {
         telemetry.addData("Field rejection active", reversingWrongBall);
         telemetry.addData("Waiting for rejected ball", waitingForWrongBallClear);
         telemetry.addData("Flower nectar rejection", rejectingFlowerNectar);
-        // Cached from handleBedSensors(), NOT re-read. Four extra I2C distance
-        // reads per loop for a display line is loop time spent on nothing --
-        // and the colour sensor bus is already the slowest thing in here.
-        telemetry.addData("Bed sensors", "pollen %s   nectar %s",
-                pollenBedSeen ? "BALL" : "-", nectarBedSeen ? "BALL" : "-");
-        telemetry.addData("Conveyor transfer", activeConveyor);
+        // Bed sensors are on the BELT line; the cached flags are not re-read
+        // here. Four extra I2C distance reads per loop for a display line is
+        // loop time spent on nothing, and the colour bus is already the
+        // slowest thing in here.
         telemetry.addData("Conveyor target ticks", conveyorTargetPosition);
         telemetry.addData("Feed target ticks", feedTargetPosition);
         turret.addTelemetry(telemetry);
