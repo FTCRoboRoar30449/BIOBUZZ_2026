@@ -19,10 +19,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
-/**
- * Maps robot hardware and applies basic motor configuration.
- * Mechanism behavior belongs in MechController, not in this class.
- */
 public class RobotHardware {
 
     public final DcMotor intakeMot;
@@ -53,119 +49,96 @@ public class RobotHardware {
     public final WebcamName camera;
     public final Limelight3A limeLight;
 
-    /**
-     * goBILDA 5000 Series bare motor, direct drive to the flywheel -- no
-     * reduction. 28 countable events per output-shaft revolution.
-     * ticks/sec = rpm * 28 / 60.
-     */
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 
-    /**
-     * MEASURED on the bench, not inherited. Free-run at full power gave
-     * 6214 rpm = 2900 ticks/s, which also confirms the 28 cpr assumption --
-     * at 14 cpr that reading would mean 3107 actual rpm, far under this
-     * motor's 6000 rpm spec, and at 56 cpr it would mean 12428, impossible.
-     *
-     * Standard flywheel recipe from the measured maximum:
-     *     F = 32767 / max_ticks_per_sec = 32767 / 2900
-     *     P = 0.1 x F        I = 0.1 x P        D = 0
-     *
-     * The old P = 65 was roughly 50x this and caused the velocity loop to
-     * oscillate. Re-check once real flywheels are fitted: the extra inertia
-     * makes the loop MORE stable, so these may end up slightly conservative.
-     */
+    public static final double SHOOTER_KF = 10.78;
+
     public static final double SHOOTER_KP = 1.13;
     public static final double SHOOTER_KI = 0.113;
     public static final double SHOOTER_KD = 0.0;
-    public static final double SHOOTER_KF = 11.30;
 
-    /** Free-run ceiling, ticks/s. Useful as a sanity bound on commanded RPM. */
-    public static final double SHOOTER_MAX_TICKS_PER_SEC = 2900.0;
+    public static final double SHOOTER_MAX_TICKS_PER_SEC = 3040.0;
 
-    /**
-     * Logitech C270, rear right of the robot behind the pollen shooter,
-     * fixed, looking backward and 40 deg below horizontal. From CAD:
-     * 44.000 mm right, 149.128 mm behind centre, 308.175 mm above the tiles.
-     *
-     * Robot frame used here and by the shooter classes: +X forward, +Y left,
-     * +Z up. The C270 is NOT turret-mounted and does NOT see the HIVE.
-     */
     public static final double C270_RIGHT_IN  = 1.732;   //  44.000 mm
     public static final double C270_BEHIND_IN = 5.871;   // 149.128 mm
     public static final double C270_HEIGHT_IN = 12.133;  // 308.175 mm
     public static final double C270_PITCH_DEG = -40.0;   // below horizontal
-    /**
-     * Logitech's published figure, and the only FOV number that does not
-     * depend on capture aspect. Horizontal and vertical fall out of it:
-     *      640x480  (4:3)   -> 45.2 x 34.7   <- what the portal uses
-     *      1280x720 (16:9)  -> 48.8 x 28.6
-     * BallDetector derives one focal length from this and the live frame
-     * size, so it stays correct if the resolution changes.
-     */
     public static final double C270_DIAGONAL_FOV_DEG = 55.0;
+
+    // Intake wheel centre, from CAD 6 Nov. Same rear face as the camera and
+    // the same 44 mm offset, so the C270 looks straight down the collecting
+    // path -- a ball in view is a ball the intake can reach.
+    //
+    // Measured twice and agreed: origin->intake is Y 258.590, Z -96.440, and
+    // camera->intake is dY 109.462, dZ 211.735, which lands on the same point
+    // from the camera constants above.
+    public static final double INTAKE_RIGHT_IN  = 1.732;    //  44.000 mm
+    public static final double INTAKE_BEHIND_IN = 10.181;   // 258.590 mm
+    public static final double INTAKE_HEIGHT_IN = 3.797;    //  96.440 mm
+
+    // THE COLLECTING POSE. Robot centre to flower centre with the robot
+    // parked and collecting, from the CAD assembly: 369.193 mm horizontal,
+    // flower reference at Z 0 like the origin. 4.35 in further out than the
+    // intake wheel -- the wheel reaches the balls sitting in the flower, not
+    // the flower's centre.
+    //
+    // MechController's FLOWER_* bands are built around this: scoop out at
+    // +5, intake on at +2, so both are live before the robot arrives.
+    //
+    // Loose balls on the floor are a different problem and use
+    // INTAKE_BEHIND_IN instead -- there the wheel itself has to reach the
+    // ball, so the offset is 10.181, not 14.535.
+    public static final double FLOWER_COLLECT_IN = 14.535;  // 369.193 mm
 
     public final Position cameraPosition =
             new Position(DistanceUnit.INCH, -C270_RIGHT_IN, -C270_BEHIND_IN, C270_HEIGHT_IN, 0);
 
-    /** Rear-facing (yaw 180) and pitched 40 deg down. */
     public final YawPitchRollAngles cameraOrientation =
             new YawPitchRollAngles(AngleUnit.DEGREES, 180, C270_PITCH_DEG, 0, 0);
 
     public RobotHardware(HardwareMap hwMap, Telemetry telemetry) {
         this.telemetry = telemetry;
 
-        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot"); // C3
-        intakeMot = hwMap.get(DcMotor.class, "intakeMot"); // E3
+        // Ports as configured on the robot, 13 Nov. C = Control Hub,
+        // E = Expansion Hub. A motor's ENCODER must be in the matching
+        // numbered encoder port, or getCurrentPosition() reads nothing while
+        // the motor still runs -- that is what the nectar buzz turned out to
+        // be. The drivetrain's four motors are NOT resolved here; they are
+        // named in pedro/Constants.java and only exist once create() does.
+        conveyorMot = hwMap.get(DcMotor.class, "conveyorMot");                   // C3
+        intakeMot = hwMap.get(DcMotor.class, "intakeMot");                       // E3
 
-        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot"); // E0
-        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot"); // C0
+        nectarShootingMot = hwMap.get(DcMotorEx.class, "nectarShootingMot");     // C0
+        pollenShootingMot = hwMap.get(DcMotorEx.class, "pollenShootingMot");     // E0
 
-        turretRot = hwMap.get(Servo.class, "turretRot"); // C4
-        flowerIntake = hwMap.get(Servo.class, "flowerIntake"); // E2
-        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen"); // C2
-        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar"); // E4
-        hoodPollen = hwMap.get(Servo.class, "hoodPollen"); // C0
-        hoodNectar = hwMap.get(Servo.class, "hoodNectar"); // E0
+        turretRot = hwMap.get(Servo.class, "turretRot");                         // servo C4
+        flowerIntake = hwMap.get(Servo.class, "flowerIntake");                   // servo E2
+        conveyorPollen = hwMap.get(Servo.class, "conveyorPollen");               // servo C2
+        conveyorNectar = hwMap.get(Servo.class, "conveyorNectar");               // servo E0
+        hoodPollen = hwMap.get(Servo.class, "hoodPollen");                       // servo C0
+        hoodNectar = hwMap.get(Servo.class, "hoodNectar");                       // servo E4
 
-        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint"); // CI2C Bus 1
-        imu = hwMap.get(IMU.class, "imu"); // CI2C Bus 0
+        pinpoint = hwMap.get(GoBildaPinpointDriver.class, "pinpoint");           // I2C C1
+        imu = hwMap.get(IMU.class, "imu");                                       // I2C C0
 
-        sensorIntakeR = hwMap.get(RevColorSensorV3.class, "sensorIntakeR"); // EI2C Bus 0
-        sensorIntakeL = hwMap.get(RevColorSensorV3.class, "sensorIntakeL"); // EI2C Bus 1
-        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL"); // EI2C Bus 3
-        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR"); // EI2C Bus 2
-        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL"); // CI2C Bus 3
-        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR"); // CI2C Bus 2
+        sensorIntakeR = hwMap.get(RevColorSensorV3.class, "sensorIntakeR");      // I2C E0
+        sensorIntakeL = hwMap.get(RevColorSensorV3.class, "sensorIntakeL");      // I2C E1
+        sensorNectarL = hwMap.get(RevColorSensorV3.class, "sensorNectarL");      // I2C E3
+        sensorNectarR = hwMap.get(RevColorSensorV3.class, "sensorNectarR");      // I2C E2
+        sensorPollenL = hwMap.get(RevColorSensorV3.class, "sensorPollenL");      // I2C C3
+        sensorPollenR = hwMap.get(RevColorSensorV3.class, "sensorPollenR");      // I2C C2
 
-        magneticLimitSwitch = hwMap.get(DigitalChannel.class, "magneticLimitSwitch"); // Digital Device C0
+        magneticLimitSwitch = hwMap.get(DigitalChannel.class, "magneticLimitSwitch"); // digital C0
         magneticLimitSwitch.setMode(DigitalChannel.Mode.INPUT);
 
-        camera = hwMap.get(WebcamName.class, "Webcam 1");
-        limeLight = hwMap.get(Limelight3A.class, "limeLight");
+        camera = hwMap.get(WebcamName.class, "Webcam 1");                        // USB 2
+        limeLight = hwMap.get(Limelight3A.class, "limeLight");                   // USB 3
 
         configureMotors();
         configureServos();
     }
 
     private void configureMotors() {
-        /*
-         * intakeMot's OWN encoder is disconnected -- that port reads the
-         * turret's Through Bore Encoder V2 instead. So it must run OPEN LOOP:
-         * in RUN_USING_ENCODER the controller would regulate intake speed
-         * against turret rotation, which surges and stalls unpredictably.
-         * getCurrentPosition() still reads the turret encoder either way.
-         */
-        /*
-         * MEASURED on the bench: FORWARD turns the intake clockwise, which is
-         * the direction that pulls a ball IN. Was REVERSE.
-         *
-         * WARNING -- this port also carries the turret's Through Bore Encoder.
-         * setDirection() flips the sign of getCurrentPosition() as well as the
-         * sign of power, so changing this line INVERTS every turret encoder
-         * reading. TurretController.ENCODER_SIGN must absorb that, and it is
-         * still unmeasured, so this is harmless today and must be measured
-         * AFTER the turret is built, not before.
-         */
         intakeMot.setDirection(DcMotor.Direction.FORWARD);
         intakeMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         intakeMot.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
@@ -176,12 +149,20 @@ public class RobotHardware {
         conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         conveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        configureShooter(nectarShootingMot);
-        configureShooter(pollenShootingMot);
+        // Both FORWARD, measured on the built robot 13 Nov -- both needed Y on
+        // RobotSetup DIRECTION. They were REVERSE, which would have read
+        // NEGATIVE velocity: every RPM gate, the exit detector and the dip
+        // counter work off getVelocity(), so a wrong direction here is not
+        // just a backwards flywheel, it breaks the shot logic outright.
+        //
+        // Separate calls, not one shared helper: the flywheels are mirror
+        // mounted and there is no rule that they match.
+        configureShooter(nectarShootingMot, DcMotor.Direction.FORWARD);
+        configureShooter(pollenShootingMot, DcMotor.Direction.FORWARD);
     }
 
-    private void configureShooter(DcMotorEx m) {
-        m.setDirection(DcMotor.Direction.REVERSE);
+    private void configureShooter(DcMotorEx m, DcMotor.Direction dir) {
+        m.setDirection(dir);
         m.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         m.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         // Coast, not brake: braking a flywheel between shots wastes spin-up
@@ -190,12 +171,6 @@ public class RobotHardware {
         m.setVelocityPIDFCoefficients(SHOOTER_KP, SHOOTER_KI, SHOOTER_KD, SHOOTER_KF);
     }
 
-    /**
-     * The turret and both hoods are goBILDA 2000-series 5-turn servos. They
-     * only reach their full 1800 deg if the PWM range is widened -- with the
-     * SDK default they travel roughly a third of that and every commanded
-     * angle silently comes up short.
-     */
     private void configureServos() {
         widen(turretRot);
         widen(hoodPollen);
@@ -208,20 +183,14 @@ public class RobotHardware {
         }
     }
 
-    /** Commanded flywheel RPM -> encoder ticks/second. */
     public static double rpmToTicksPerSec(double rpm) {
         return rpm * SHOOTER_TICKS_PER_REV / 60.0;
     }
 
-    /** Encoder ticks/second -> RPM. */
     public static double ticksPerSecToRpm(double tps) {
         return tps * 60.0 / SHOOTER_TICKS_PER_REV;
     }
 
-    /**
-     * Read-only Pinpoint telemetry. The localization system should own
-     * pinpoint.update() so it is not updated twice in one control loop.
-     */
     public void addPinpointTelemetry(Telemetry telemetry) {
         if (pinpoint == null) {
             telemetry.addData("Pinpoint", "Not configured");
@@ -236,5 +205,3 @@ public class RobotHardware {
         );
     }
 }
-
-

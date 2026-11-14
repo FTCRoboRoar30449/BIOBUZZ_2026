@@ -13,47 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * Measures the two numbers BioBuzzShooterRed/Blue cannot derive: the shooter
- * EFFICIENCY (ball exit speed / wheel surface speed) and the ball's DRAG
- * COEFFICIENT Cd.
- *
- * WHY BOTH AT ONCE
- *   Efficiency sets how fast the ball leaves for a given RPM; Cd sets how
- *   quickly it slows down. Both move the landing point, so no single shot can
- *   tell them apart -- a slow ball with little drag lands where a fast ball
- *   with lots of drag does. They separate only across a SPREAD of hood angles
- *   and speeds, because drag bites harder on long, fast flights than on short
- *   lobbed ones. Hence: take shots across the whole hood range at two or three
- *   speeds each, then fit both together.
- *
- * WHAT TO EXPECT
- *   Your hood travels 55-80 deg, which is the WORST regime for pinning down
- *   Cd -- steep lobs spend little time at speed, so drag barely shows. Expect
- *   efficiency to come out tight and Cd to stay loose. That is fine: efficiency
- *   is the one that scales every RPM. If Cd refuses to converge, pin it at 0.55
- *   and trust the efficiency number.
- *
- * MEASUREMENT
- *   Fire onto bare tiles and mark where the ball FIRST touches down, not where
- *   it stops. Dust the ball with chalk or flour so the first contact leaves a
- *   mark. Measure from the point on the floor directly below the exit, along
- *   the ground, in inches.
- *
- * CONTROLS
- *   dpad up/down     move between fields
- *   dpad left/right  change the selected field
- *   right bumper     spin up / stop flywheel
- *   A                fire
- *   B                record the sample at the entered distance
- *   X                delete the last sample
- *   Y                run the fit (takes a few seconds)
- *   back             dump all samples as CSV to telemetry
- *
- * This version uses the exact hardware names from RobotHardware. Both shooter
- * motors must be configured with their built-in encoders connected. Samples
- * are recorded using measured encoder RPM, never the commanded RPM.
- */
 @TeleOp(name = "BioBuzz Shooter Calibration", group = "calibration")
 public class ShooterCalibration extends LinearOpMode {
 
@@ -63,27 +22,12 @@ public class ShooterCalibration extends LinearOpMode {
     public static String POLLEN_HOOD  = "hoodPollen";
     public static String NECTAR_HOOD  = "hoodNectar";
 
-    /**
-     * goBILDA 5000 Series bare motor encoder resolution.
-     * The built-in quadrature encoder reports 28 countable events per
-     * revolution of this motor's output shaft (no gearbox on this motor).
-     * If you add gearing between the motor and flywheel, include that ratio.
-     */
     public static double TICKS_PER_REV = 28.0;
 
-    /**
-     * MEASURED on the bench, mirroring RobotHardware. These replace P 65 / F
-     * 13.6, which were the pre-measurement guesses: P 65 is roughly 50x the
-     * standard recipe and made the velocity loop oscillate, so every recorded
-     * RPM would have been taken while the wheel was still hunting.
-     *
-     * Recipe from the measured 2900 ticks/s free-run ceiling:
-     *     F = 32767 / 2900 = 11.30    P = 0.1 F    I = 0.1 P    D = 0
-     */
     public static double VELOCITY_PIDF_P = 1.13;
     public static double VELOCITY_PIDF_I = 0.113;
     public static double VELOCITY_PIDF_D = 0.0;
-    public static double VELOCITY_PIDF_F = 11.30;
+    public static double VELOCITY_PIDF_F = 10.78;
 
     // ---- physical constants (must match the shooter classes) -------------
     public static final double WHEEL_DIA_M = 0.072;
@@ -92,11 +36,9 @@ public class ShooterCalibration extends LinearOpMode {
     public static final double DT          = 0.0015;
     public static final double IN_PER_M    = 39.3700787;
 
-    /** POLLEN: 2.8 in, 26 g. NECTAR: 3.6 in, 42 g. */
     private static double ballDiaM(boolean nectar)  { return (nectar ? 3.6 : 2.8) / IN_PER_M; }
     private static double ballMassKg(boolean nectar){ return nectar ? 0.042 : 0.026; }
 
-    /** Exit height above the floor, inches, from the CAD hood map. */
     private static double exitHeightIn(boolean nectar, double hoodDeg) {
         double a55 = nectar ? 16.89 : 16.26;
         double a80 = nectar ? 15.62 : 15.15;
@@ -247,7 +189,6 @@ public class ShooterCalibration extends LinearOpMode {
     private DcMotorEx activeMotor() { return nectar ? nectarMotor : pollenMotor; }
     private Servo activeHood()      { return nectar ? nectarHood  : pollenHood;  }
 
-    /** Configure encoder-based velocity control and the tunable PIDF values. */
     private void configureShooterMotor(DcMotorEx motor) {
         if (motor == null) return;
         motor.setDirection(DcMotorSimple.Direction.REVERSE); // matches RobotHardware
@@ -257,7 +198,6 @@ public class ShooterCalibration extends LinearOpMode {
                 VELOCITY_PIDF_D, VELOCITY_PIDF_F);
     }
 
-    /** Actual flywheel RPM from the selected motor's encoder; never substitute target RPM. */
     private double actualRpm() {
         DcMotorEx m = activeMotor();
         if (m == null || TICKS_PER_REV <= 0.0) return Double.NaN;
@@ -277,37 +217,18 @@ public class ShooterCalibration extends LinearOpMode {
         if (nectarMotor != null) nectarMotor.setVelocity(0);
     }
 
-    /**
-     * Hood positions come from HoodMap, not from a local 0..1 ramp.
-     *
-     * This used to interpolate HOOD_SERVO_AT_55=0.00 to HOOD_SERVO_AT_80=1.00
-     * for BOTH hoods. Two things were wrong with that. It drove the full servo
-     * range across 25 deg of hood, when the gearing needs only 0.110 (pollen)
-     * and 0.129 (nectar). And it used ONE direction for both, when the hoods
-     * are mirrored and measured OPPOSITE: raising the pollen servo lowers its
-     * angle, raising the nectar servo raises its angle.
-     *
-     * Calibrating against a hood map that disagrees with the one the robot
-     * flies would produce an efficiency number that is wrong by whatever the
-     * two maps differ by -- the exact failure this OpMode exists to avoid.
-     */
     private void applyHood() {
         Servo s = activeHood();
         if (s == null) return;
         s.setPosition(nectar ? HoodMap.nectarPos(hoodDeg) : HoodMap.pollenPos(hoodDeg));
     }
 
-    /** Hook your feeder here. Left as a no-op so the OpMode is safe as shipped. */
     private void fire() {
         // e.g. feederServo.setPosition(FEED); sleep(250); feederServo.setPosition(REST);
     }
 
     // ---- ballistics -------------------------------------------------------
 
-    /**
-     * Horizontal distance, inches, from the exit point to where the ball first
-     * reaches floor level. Same integrator and drag law as the shot tables.
-     */
     public static double flightDistanceIn(double v0, double hoodDeg, double exitHIn,
                                           double diaM, double massKg, double cd) {
         double th = Math.toRadians(hoodDeg);
@@ -329,16 +250,12 @@ public class ShooterCalibration extends LinearOpMode {
         return -1;
     }
 
-    /** Ball exit speed, m/s, for a commanded RPM at a given efficiency. */
     public static double exitSpeed(double rpm, double efficiency) {
         return Math.PI * WHEEL_DIA_M * rpm * efficiency / 60.0;
     }
 
     // ---- the fit ----------------------------------------------------------
 
-    /**
-     * Sum of squared range error, inches, for one (efficiency, Cd) pair.
-     */
     private double sse(double eff, double cd) {
         double err = 0.0;
         for (int i = 0; i < samples.size(); i++) {
@@ -354,10 +271,6 @@ public class ShooterCalibration extends LinearOpMode {
         return err;
     }
 
-    /**
-     * Best efficiency with Cd held fixed. Coarse pass then refinement.
-     * @return {efficiency, sumSquaredError}
-     */
     public double[] fitEfficiency(double cd) {
         double bE = 0.2, bErr = Double.MAX_VALUE;
         for (double e = 0.20; e <= 1.00 + 1e-9; e += 0.01) {
@@ -372,11 +285,6 @@ public class ShooterCalibration extends LinearOpMode {
         return new double[] { bE, bErr };
     }
 
-    /**
-     * Fit efficiency at the Cd currently selected. This is the number that
-     * matters: it scales every RPM, and it comes out within about +/-3% no
-     * matter which Cd you pin, so it does not wait on Cd being right.
-     */
     private String runFit() {
         if (samples.size() < 3) return "need at least 3 samples";
         double[] f = fitEfficiency(cd);
@@ -385,16 +293,6 @@ public class ShooterCalibration extends LinearOpMode {
                 f[0], cd, rms, samples.size());
     }
 
-    /**
-     * Sweep Cd, re-fitting efficiency at each, and show how little the fit
-     * quality actually changes. If rms is flat across the sweep, your data
-     * cannot identify Cd -- leave it at 0.55 and use the efficiency.
-     *
-     * On synthetic noise-free data the rms signal across Cd 0.35..0.90 is only
-     * about 0.6 in end to end, while +/-1 in of tape-measure noise produces
-     * roughly 0.5 in of rms on its own. So expect it to be flat, and do not
-     * read a Cd off a flat curve.
-     */
     private void runCdDiagnostic() {
         if (samples.size() < 3) { fitResult = "need at least 3 samples"; return; }
         telemetry.clearAll();
@@ -435,37 +333,3 @@ public class ShooterCalibration extends LinearOpMode {
         sleep(4000);
     }
 }
-
-/*
- * ---------------------------------------------------------------------------
- * HOW TO RUN IT
- *
- * 1. Set TICKS_PER_REV and the hood servo limits, and hook fire() to your
- *    feeder. Until fire() is wired, trigger the shot by hand and still record.
- *
- * 2. Take at least 8-12 shots spread over the WHOLE envelope:
- *       hood 55, 65, 75, 80  x  two or three RPMs each.
- *    Shots clustered at one hood or one speed cannot separate efficiency from
- *    Cd -- the fit will return something, and it will be meaningless.
- *
- * 3. Mark FIRST floor contact, not where the ball stops rolling.
- *
- * 4. Press Y. Read eff and Cd. Put eff into BioBuzzShooterRed/Blue as
- *    `efficiency`. Cd feeds the trajectory model that generated the tables --
- *    if it comes back far from 0.55, the tables want regenerating.
- *
- * 5. Sanity: rms should be a couple of inches. Much more means the
- *    measurements, the hood map, or the RPM reading disagree with the model.
- *
- * ---------------------------------------------------------------------------
- * THE MORE DIRECT ALTERNATIVE
- *
- * If all you want is to SCORE, you do not need either number. Park at a known
- * range, sweep RPM until the ball goes in, record (range, hood, RPM), repeat
- * every few inches, and use that table instead of the modelled one. That is
- * strictly more accurate than any fit, because it absorbs every effect the
- * model leaves out -- ball wear, wheel compression, spin, air. Fitting eff and
- * Cd is worth doing when you want the model to EXTRAPOLATE to ranges you have
- * not measured.
- * ---------------------------------------------------------------------------
- */

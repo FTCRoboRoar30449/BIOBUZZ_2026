@@ -7,7 +7,6 @@ import org.firstinspires.ftc.vision.VisionProcessor;
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
-import org.opencv.core.Point;
 import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -18,45 +17,14 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * C270 ball finder: yellow POLLEN, red and blue NECTAR on the tiles.
- *
- * Two jobs:
- *   1. Count POLLEN in front of the robot, which is how INTAKE_FLOWER knows
- *      when a flower is empty.
- *   2. Give the nearest ball as a FIELD position so PedroPathing can drive to
- *      it, in autonomous or on a driver button.
- *
- * GEOMETRY
- *   The camera is rear-facing, fixed, 40 deg below horizontal, 308.175 mm up,
- *   149.128 mm behind centre and 44 mm right. Balls sit ON the tiles, so a
- *   detection's ground contact point is recoverable: project the bottom of the
- *   blob onto the z = 0 plane. That is what makes range and bearing possible
- *   from one camera with no stereo and no known ball size.
- *
- *   Visible strip is roughly 15 to 31 in behind the robot centre. A ball
- *   closer than that leaves the frame -- by design, because the intake swings
- *   out to meet it there.
- *
- * CALIBRATION
- *   The HSV ranges below are STARTING POINTS. They are in OpenCV units, where
- *   HUE IS 0-179, not 0-360 -- the values measured with your REV colour
- *   sensors are on the 0-360 scale and must be halved before they mean
- *   anything here. Lighting changes them too. Tune with the HSV page in
- *   HardwareCheck before trusting any of it.
- */
 public class BallDetector implements VisionProcessor {
 
     public enum BallType { POLLEN, NECTAR_RED, NECTAR_BLUE }
 
-    /** One ball, in the field frame Pedro uses. */
     public static final class Detection {
         public final BallType type;
-        /** Ground contact point, PEDRO inches. */
         public final double fieldX, fieldY;
-        /** Range and bearing from the robot centre, inches / degrees CCW. */
         public final double rangeIn, bearingDeg;
-        /** Blob area in pixels -- bigger is nearer and more trustworthy. */
         public final double areaPx;
 
         Detection(BallType t, double fx, double fy, double r, double b, double a) {
@@ -93,42 +61,16 @@ public class BallDetector implements VisionProcessor {
     public static Scalar BLUE_LO = new Scalar(96, 75, 80);
     public static Scalar BLUE_HI = new Scalar(118, 255, 255);
 
-    /** Reject specks and reject the whole frame going one colour. */
     public static double MIN_AREA_PX = 300;
     public static double MAX_AREA_PX = 90000;
-    /** 1.0 is a perfect circle. Balls are round; floor tape and shadows are not. */
     public static double MIN_CIRCULARITY = 0.55;
 
     // ---- camera, from RobotHardware --------------------------------------
     public static double CAM_HEIGHT_IN = RobotHardware.C270_HEIGHT_IN;
     public static double CAM_BEHIND_IN = RobotHardware.C270_BEHIND_IN;
     public static double CAM_RIGHT_IN  = RobotHardware.C270_RIGHT_IN;
-    /**
-     * MAGNITUDE of the downward pitch, positive. RobotHardware states the same
-     * angle as -40 because it uses the SDK's convention, where negative is
-     * below horizontal; the basis vectors in groundPoint() are built for the
-     * positive form, so the sign is flipped here rather than hard-coded.
-     *
-     * It used to be a bare 40.0 -- the only camera constant not derived from
-     * RobotHardware, so re-mounting the camera there would have left every
-     * range quietly wrong. Same value today, but it tracks now.
-     */
     public static double CAM_PITCH_DEG = -RobotHardware.C270_PITCH_DEG;
 
-    /**
-     * Logitech's published figure for the C270, and the only FOV number worth
-     * trusting: 55 deg DIAGONAL.
-     *
-     * Horizontal and vertical both fall out of it once the capture aspect is
-     * known, so deriving them here means the code stays correct whatever
-     * resolution the portal ends up using:
-     *      640x480  (4:3)   -> 45.2 x 34.7
-     *      1280x720 (16:9)  -> 48.8 x 28.6
-     * The portal uses the FIRST pair -- 640x480. The taller 4:3 frame sees a
-     * 21 in deep strip of tiles against 16 in at 720p, for a quarter of the
-     * pixels. Nothing here is hard-coded to that: the focal length comes from
-     * the live frame size, so changing the portal's resolution is safe.
-     */
     public static double CAM_DIAGONAL_FOV_DEG = RobotHardware.C270_DIAGONAL_FOV_DEG;
 
     private int imgW = 640, imgH = 480;
@@ -140,46 +82,20 @@ public class BallDetector implements VisionProcessor {
 
     private final Object lock = new Object();
     private List<Detection> latest = new ArrayList<Detection>();
-    /** Pollen-coloured pixels in the last frame, before shape filtering. */
     private int pollenMaskPx = 0;
 
     // scratch, reused so the processor does not allocate every frame
     private final Mat hsv = new Mat(), m1 = new Mat(), m2 = new Mat(), mask = new Mat();
 
-    /** Mean HSV over a small patch at frame centre. The fastest way to tune:
-     *  hold a ball in the middle of the view and read what it actually is,
-     *  instead of guessing gates and seeing what sticks. */
     private volatile double centreH = 0, centreS = 0, centreV = 0;
     public static int CENTRE_PATCH_PX = 40;
 
     public double[] getCentreHsv() { return new double[] { centreH, centreS, centreV }; }
 
-    /**
-     * Mean of the SAME patch in the frame as delivered, before any colour
-     * conversion. This is the only way to tell a bad gate from a bad channel
-     * order: on a yellow ball the red and green channels must both be high and
-     * blue low. If channel 0 comes back LOW and channel 2 HIGH, the frame is
-     * BGR and we are converting it as if it were RGB.
-     *
-     *     yellow ball, roughly RGB(230,200,40)
-     *         converted correctly        -> OpenCV H ~ 25
-     *         converted with R/B swapped -> OpenCV H ~ 95
-     *     red nectar     correct H ~ 0     swapped H ~ 120
-     *     blue nectar    correct H ~ 116   swapped H ~ 4
-     *
-     * A first reading of H ~ 100 on a yellow ball matches the swapped column
-     * almost exactly, which is why this readout exists.
-     */
     private volatile double centre0 = 0, centre1 = 0, centre2 = 0;
 
     public double[] getCentreRaw() { return new double[] { centre0, centre1, centre2 }; }
 
-    /**
-     * Channel order of the frames the VisionPortal hands us. Flip this if the
-     * raw readout above shows the swap, then re-measure the gates -- do not
-     * try to compensate by moving the hue windows, because red and blue trade
-     * places and the two nectar colours would end up detecting each other.
-     */
     public static boolean FRAME_IS_BGR = false;
 
     @Override
@@ -188,14 +104,6 @@ public class BallDetector implements VisionProcessor {
         computeIntrinsics();
     }
 
-    /**
-     * One focal length from the published diagonal FOV. Square pixels, so
-     * fx == fy; the horizontal and vertical FOVs are consequences of that and
-     * of the frame's aspect, not independent inputs.
-     *
-     * Still worth checking with a tape at a known distance before trusting
-     * ranges -- an error here scales every range estimate linearly.
-     */
     private void computeIntrinsics() {
         double diagPx = Math.hypot(imgW, imgH);
         double f = (diagPx / 2.0) / Math.tan(Math.toRadians(CAM_DIAGONAL_FOV_DEG / 2.0));
@@ -204,12 +112,9 @@ public class BallDetector implements VisionProcessor {
         cy = imgH / 2.0;
     }
 
-    /** Horizontal FOV actually in effect, degrees. Telemetry only. */
     public double hfovDeg() { return 2 * Math.toDegrees(Math.atan((imgW / 2.0) / fx)); }
-    /** Vertical FOV actually in effect, degrees. Telemetry only. */
     public double vfovDeg() { return 2 * Math.toDegrees(Math.atan((imgH / 2.0) / fy)); }
 
-    /** Call every loop from the OpMode with the Pedro pose. */
     public void setPose(double xIn, double yIn, double yawDeg) {
         poseX = xIn; poseY = yIn; poseYawDeg = yawDeg; poseValid = true;
     }
@@ -241,15 +146,16 @@ public class BallDetector implements VisionProcessor {
                 return Double.compare(a.rangeIn, b.rangeIn);
             }
         });
-        synchronized (lock) { latest = found; pollenMaskPx = pollenPx; }
+        // Only while accepting. setProcessorEnabled(false) does not stop a
+        // frame already in flight, so without this test that frame completes
+        // after markStale() and writes detections back -- resurrecting a
+        // previous flower's count while the detector is supposed to be off.
+        synchronized (lock) {
+            if (accepting) { latest = found; pollenMaskPx = pollenPx; }
+        }
         return null;
     }
 
-    /**
-     * Mean of a centre patch, for threshold tuning -- in HSV, and in the raw
-     * frame alongside it so a channel-order fault is visible rather than
-     * showing up as hues that refuse to make sense.
-     */
     private void sampleCentre(Mat raw) {
         int half = CENTRE_PATCH_PX / 2;
         int x = Math.max(0, imgW / 2 - half), y = Math.max(0, imgH / 2 - half);
@@ -271,7 +177,6 @@ public class BallDetector implements VisionProcessor {
         centre0 = rawMean.val[0]; centre1 = rawMean.val[1]; centre2 = rawMean.val[2];
     }
 
-    /** Live gate editing, for the tuning page. */
     public static void setGate(BallType t, double hLo, double hHi, double sMin, double vMin) {
         switch (t) {
             case POLLEN:
@@ -339,10 +244,6 @@ public class BallDetector implements VisionProcessor {
         }
     }
 
-    /**
-     * Pixel -> ground contact point in the ROBOT frame (+X forward, +Y left),
-     * inches. Null when the ray points at or above the horizon.
-     */
     public double[] groundPoint(double u, double v) {
         double xn = (u - cx) / fx;
         double yn = (v - cy) / fy;
@@ -364,7 +265,6 @@ public class BallDetector implements VisionProcessor {
         return new double[] { camX + t * rx, camY + t * ry };
     }
 
-    /** Robot-frame point -> PEDRO field inches, using the last pose given. */
     private double[] toField(double rx, double ry) {
         if (!poseValid) return new double[] { Double.NaN, Double.NaN };
         double c = Math.cos(Math.toRadians(poseYawDeg)), s = Math.sin(Math.toRadians(poseYawDeg));
@@ -373,19 +273,36 @@ public class BallDetector implements VisionProcessor {
 
     // ---- what the FSM asks for -------------------------------------------
 
-    public List<Detection> getDetections() {
-        synchronized (lock) { return new ArrayList<Detection>(latest); }
+    // Called when the processor is switched off. Results outlive the frames
+    // that produced them, and a count from the LAST flower read as current
+    // is the one error that hurts -- a stale 0 abandons a flower that is
+    // still full. Null makes pollenInView() report -1 instead, which the FSM
+    // treats as "camera unavailable, keep collecting".
+    //
+    // This also revives a branch that was dead: latest was initialised to an
+    // empty list and never set null, so the -1 path could not happen and the
+    // documented blind fallback was unreachable.
+    // Gate on results, not just a one-shot clear. Set false BEFORE disabling
+    // the processor so any frame mid-flight is discarded rather than landing
+    // after the clear.
+    private boolean accepting = true;
+
+    public void setAccepting(boolean on) {
+        synchronized (lock) {
+            accepting = on;
+            if (!on) { latest = null; pollenMaskPx = 0; }
+        }
     }
 
-    /**
-     * POLLEN currently in view. While the robot is at a flower this IS the
-     * flower's count -- balls sit on the tiles there too, so position rather
-     * than height is what separates flower pollen from field pollen, and
-     * being at the flower supplies that context.
-     *
-     * Returns -1 only if no frame has been processed, which the FSM treats as
-     * VISION_UNAVAILABLE rather than "empty".
-     */
+    public void markStale() { setAccepting(false); }
+
+    public List<Detection> getDetections() {
+        synchronized (lock) {
+            return latest == null ? new ArrayList<Detection>()
+                                  : new ArrayList<Detection>(latest);
+        }
+    }
+
     public int pollenInView() {
         synchronized (lock) {
             if (latest == null) return -1;
@@ -410,19 +327,19 @@ public class BallDetector implements VisionProcessor {
         }
     }
 
-    /** Pollen-coloured pixels in the last frame, before any shape filtering. */
     public int getPollenMaskPx() { synchronized (lock) { return pollenMaskPx; } }
 
-    /** Nearest ball of any type, or null. Already sorted by range. */
     public Detection nearestBall() {
-        synchronized (lock) { return latest.isEmpty() ? null : latest.get(0); }
+        synchronized (lock) {
+            return (latest == null || latest.isEmpty()) ? null : latest.get(0);
+        }
     }
 
-    /** Nearest ball we would actually want to collect. */
     public Detection nearestWanted(int allianceNectarColorId) {
         BallType wantedNectar = allianceNectarColorId == 2
                 ? BallType.NECTAR_RED : BallType.NECTAR_BLUE;
         synchronized (lock) {
+            if (latest == null) return null;
             for (Detection d : latest) {
                 if (d.type == BallType.POLLEN || d.type == wantedNectar) return d;
             }
@@ -438,7 +355,3 @@ public class BallDetector implements VisionProcessor {
         // camera is not something a driver aims by eye.
     }
 }
-
-
-
-

@@ -5,127 +5,110 @@ import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoImplEx;
 
-/**
- * Turret aiming and homing.
- *
- * MECHANISM
- *   turretRot is a goBILDA 2000-series 5-turn servo in POSITION mode: 1800 deg
- *   of travel. The servo turns 2x the turret, so the turret has 900 deg of
- *   range -- +/-450 deg about centre. The +/-180 deg the shooter classes ask
- *   for uses 40% of that, so travel is never the constraint.
- *
- *   A REV Through Bore Encoder V2 reads turret rotation 1:1, wired into the
- *   intakeMot encoder port (intakeMot's own encoder is disconnected). A
- *   magnetic limit switch sits at turret 0, shooters facing robot-forward.
- *
- * DRIVE TRAIN -- why the obvious sign guess is wrong twice over
- *   The servo is mounted UPSIDE-DOWN and drives both turret rings through a
- *   herringbone mesh. That is TWO reversals, and they cancel:
- *
- *     servo CW (seen from underneath, the way it is mounted)
- *       -> herringbone mesh reverses -> rings CCW seen from underneath
- *       -> viewed from ABOVE that same motion reads CW
- *
- *   So the rings turn CW from above when the servo turns CW. Anyone
- *   re-deriving SERVO_SIGN from "there is a gear in it, so it must invert"
- *   will get the wrong answer -- the mounting undoes the mesh.
- *
- * WHY HOMING DOES NOT SWEEP
- *   A servo in position mode is ABSOLUTE: setPosition(0.5) drives to its own
- *   centre no matter where it started. So the turret's angle is known from the
- *   command, not from a search. What actually needs establishing is the
- *   ASSEMBLY OFFSET -- which servo position corresponds to turret-forward --
- *   and that is a one-time calibration constant, not a per-match procedure.
- *
- *   At init we command SERVO_AT_ZERO and expect the limit switch to confirm.
- *   If it does not, a BOUNDED nudge sweeps the command a few degrees either
- *   side and reports the corrected offset. The turret never free-runs and
- *   never approaches its mechanical stops.
- *
- *   The encoder is then there to CHECK the servo got where it was told --
- *   catching slip, stall and a mis-set offset -- not to drive a control loop.
- *
- * CONVENTION
- *   turretDeg is CW-positive with 0 = robot forward, matching the turretDeg
- *   that ShooterRed/ShooterBlue emit. Feed their value straight in.
- */
 public class TurretController {
 
     // ---- mechanism, fixed ------------------------------------------------
     public static final double SERVO_TRAVEL_DEG  = 1800.0;   // 5-turn servo
-    public static final double SERVO_PER_TURRET  = 2.0;      // servo deg per turret deg
-    /** Servo 0..1 spans this much turret rotation. Sets the position scaling. */
-    public static final double TURRET_TRAVEL_DEG = SERVO_TRAVEL_DEG / SERVO_PER_TURRET; // 900
+    public static final double SERVO_PER_TURRET  = 2.0;      // ASSUMED 2:1
 
-    /**
-     * USABLE travel either side of forward -- NOT the servo's full 450.
-     *
-     * MEASURED: the turret reaches about 190 deg each way before the mechanism
-     * stops it. The servo could drive 450, so the clamp is what keeps a
-     * commanded angle from winding the turret into its own stop. The shooter
-     * classes emit +/-180, which fits inside this with 10 deg to spare.
-     *
-     * Scaling still uses TURRET_TRAVEL_DEG, because servo 0..1 really does
-     * span 900 deg -- this only limits what may be COMMANDED.
-     */
-    public static double TURRET_LIMIT_DEG = 190.0;
+    // Degrees of TURRET per 1.0 of servo position. MEASURED, not derived.
+    //
+    // It used to be SERVO_TRAVEL_DEG / SERVO_PER_TURRET = 900, which assumed
+    // a 5-turn servo and 2:1 gearing. On the built robot, sweeping the
+    // commanded band 0.289..0.711 -- 0.422 of servo range -- moves the turret
+    // 190 deg, not the 380 that implies. So the real figure is 450: either
+    // the gearing is 4:1 or the servo is not 5-turn.
+    //
+    // Every commanded angle scales with this. At 900 the turret moved HALF
+    // what was asked and nothing said so -- a 30 deg sign test produced 15.
+    // 13 Nov, second measurement, taken with BOTH servo positions and encoder
+    // ticks at the stops: servo 0.24..0.57 (0.330) against 5447 ticks
+    // (239.4 deg) gives 725 deg per 1.0 of servo.
+    //
+    // CONFIRMED 14 Nov by a run that captured all three points together:
+    //     + limit (LEFT)    servo 0.23   encoder  4790
+    //     zero              servo 0.41   encoder  1816
+    //     - limit (RIGHT)   servo 0.56   encoder  -808
+    //
+    // Each half gives its own ratio, and they agree:
+    //     zero -> +limit  2974 ticks = 130.7 deg over 0.180 -> 726 deg/unit
+    //     zero -> -limit  2624 ticks = 115.3 deg over 0.150 -> 769 deg/unit
+    //
+    // Earlier runs looked wildly inconsistent (1150 vs 260 deg/unit) only
+    // because the home reading came from a DIFFERENT OpMode run. init does
+    // STOP_AND_RESET_ENCODER, so absolute ticks are meaningless across runs
+    // -- compare them only within one.
+    public static double TURRET_TRAVEL_DEG = 745.0;
 
-    /** REV Through Bore Encoder V2, 1:1 with the turret. */
+    // Half the turret's usable travel. MEASURED on the built robot, 13 Nov,
+    // from the encoder at both mechanical stops: 4707 ticks = 206.9 deg total.
+    //
+    // But that travel is NOT centred on the home switch:
+    //     home -> low end    2142 ticks =  94.1 deg
+    //     home -> high end   2565 ticks = 112.7 deg
+    //
+    // This constant is symmetric (+/-LIMIT), so it is capped by the TIGHT
+    // side, not by half the span.
+    //
+    // From zero (servo 0.4100), 14 Nov:
+    //     +130.7 deg to the LEFT limit,  -115.3 deg to the RIGHT limit
+    //
+    // Asymmetric, and this constant is symmetric (+/-LIMIT), so the TIGHT
+    // side caps it: 105 leaves 10.3 deg of margin on the right and never
+    // loads a stop in a match.
+    //
+    // It pairs with TURRET_TRAVEL_DEG: the band is SERVO_AT_ZERO +/-
+    // LIMIT/TRAVEL, so fixing one without the other moves the ends the wrong
+    // way. Re-check after HOME_OFFSET_DEG is set, because moving zero to true
+    // forward changes how the asymmetry falls.
+    public static double TURRET_LIMIT_DEG = 105.0;
+
     public static double ENCODER_TICKS_PER_REV = 8192.0;
 
-    /**
-     * STILL UNMEASURED: the servo position that puts the turret at 0 deg
-     * (shooters facing robot-forward). This is the ASSEMBLY OFFSET and it can
-     * only be found with the turret bolted together.
-     *
-     * 0.500 is a sound placeholder now that the limit is +/-190: that needs
-     * only 0.211 of servo either side, so the whole usable range fits around
-     * centre without clamping. Homing will fold in the correction it finds.
-     */
-    public static double SERVO_AT_ZERO = 0.500;
+    // 0.4100: the servo position at which the home magnet trips, measured
+    // 13 Nov. Homing adopts whatever it finds, so this is only the starting
+    // guess -- but a guess 0.09 out shifted the whole band and made the first
+    // search start from the wrong place.
+    public static double SERVO_AT_ZERO = 0.4100;
 
-    /**
-     * MEASURED: raising the servo position rotates the turret CLOCKWISE seen
-     * from above, and this class defines turretDeg as CW-positive (see the
-     * CONVENTION note in the class header). Positive angle therefore wants a
-     * higher servo position: +1.
-     *
-     * !! CHECK THIS ONE AGAINST ShooterRed/ShooterBlue BEFORE COMPETING.
-     * Everything here is internally consistent, but it only AIMS correctly if
-     * those classes also emit CW-positive turretDeg. The turret's own travel
-     * was described as reaching "-190 in CW" -- CW labelled negative, which
-     * is CCW-positive, the opposite of what this class assumes. If ShooterRed
-     * thinks that way, flip this to -1 and the chain lines up again.
-     *
-     * Settle it by READING ShooterRed, no robot needed. Find where it builds
-     * turretDeg from a bearing and the robot yaw:
-     *     bearing - yaw   -> CCW-positive  -> SERVO_SIGN = -1
-     *     yaw - bearing   -> CW-positive   -> SERVO_SIGN = +1  (as set)
-     * ShooterAdapter.turretDegToPoint() uses the second form, which is what
-     * the flower shot already relies on.
-     *
-     * Or on a built robot: stand a target clearly to the robot's LEFT, call
-     * plan(), watch which way the turret goes. Left is correct; right means
-     * flip this sign.
-     */
-    public static int SERVO_SIGN = +1;
+    // -1, from the direction labels taken 14 Nov: the + limit is the turret
+    // shooting LEFT, at servo 0.23, which is BELOW zero (0.4100). Positive
+    // degrees therefore DECREASE the servo position.
+    //
+    // This was +1, so every commanded angle aimed at the MIRROR of the target
+    // -- the one turret fault that nothing else reveals, because the shot is
+    // perfectly executed in the wrong direction.
+    public static int SERVO_SIGN = -1;
 
-    /** MEASURED: the through-bore reads the right sense after intakeMot was
-     *  set FORWARD. Re-check if that direction is ever changed again. */
+    // +1: at the + limit (left) the encoder reads 4790, against -808 at the
+    // other end, so ticks increase with positive degrees. The -1 measured on
+    // step 22 was taken before the travel scale was corrected and against a
+    // step that moved half what it claimed; this comes from the limits
+    // themselves and supersedes it.
     public static int ENCODER_SIGN = +1;
-    /** DigitalChannel reading when the turret is AT home. */
     public static boolean LIMIT_TRIGGERED_STATE = false;
 
     // ---- tuning ----------------------------------------------------------
-    /** How far either side of the expected zero the bounded search looks. */
-    public static double SEARCH_SPAN_DEG = 30.0;
-    /** Step size of the bounded search, turret degrees. */
+    // Which side the search tries FIRST. It alternates either way --
+    // 0, +s, -s, +2s, -2s -- so it finds the magnet whichever this is. But a
+    // turret carries its own harness, and sweeping away from the magnet first
+    // doubles the travel and winds the cables the wrong way before it comes
+    // back. Set this toward the side the switch is actually on.
+    // +1 from 13 Nov. On this robot that is COUNTER-CLOCKWISE seen from
+    // above, which is the short way to the magnet; -1 swept clockwise and
+    // went the long way round, winding the harness first.
+    //
+    // The sign-to-direction mapping is not fixed: it goes through
+    // SERVO_SIGN, which step 8 measures. If SERVO_SIGN is ever flipped, this
+    // flips with it. Y on the HOME step changes it live.
+    public static int SEARCH_FIRST_DIR = +1;
+
+    // 85: the magnet sits well off the stored zero, and 30 could not reach it
+    // -- homing reported FAILED with the cause nowhere on screen.
+    public static double SEARCH_SPAN_DEG = 85.0;
     public static double SEARCH_STEP_DEG = 0.5;
-    /** Settle time per search step. */
     public static long SEARCH_STEP_MS = 40;
-    /** Settle time after the initial home command. */
     public static long VERIFY_SETTLE_MS = 700;
-    /** Encoder-vs-command disagreement that counts as slip. */
     public static double SLIP_TOLERANCE_DEG = 6.0;
 
     public enum HomeState { NOT_HOMED, VERIFYING, NEEDS_SEARCH, SEARCHING, HOMED, FAILED }
@@ -141,7 +124,7 @@ public class TurretController {
 
     private long phaseStartMs = 0;
     private double searchOffsetDeg = 0.0;
-    private int searchDir = +1;
+    private int searchStep = 0;
     private long lastStepMs = 0;
 
     public TurretController(RobotHardware robot) {
@@ -159,14 +142,24 @@ public class TurretController {
 
     // ---- aiming ----------------------------------------------------------
 
-    /** Servo position for a turret angle. Pure maths, no hardware. */
+    // The home switch is a repeatable reference MARK, not the zero you want.
+    // Nothing guarantees the magnet lands exactly at robot-forward, and on the
+    // built robot it does not: homing leaves the turret about 45 deg off.
+    //
+    // This is the turret angle AT THE SWITCH, measured from true forward.
+    // Homing adopts it, so forward stays forward however the magnet is
+    // mounted -- and moving the magnet later only changes this one number.
+    //
+    // Sign follows SERVO_SIGN, so do not derive it: set a magnitude, re-home,
+    // and look. If the turret ends up twice as far out, flip the sign.
+    public static double HOME_OFFSET_DEG = 0.0;
+
     public static double servoPositionFor(double turretDeg) {
         double d = clampTurret(turretDeg);
         double pos = SERVO_AT_ZERO + SERVO_SIGN * d / TURRET_TRAVEL_DEG;
         return pos < 0 ? 0 : (pos > 1 ? 1 : pos);
     }
 
-    /** Inverse, for telemetry. */
     public static double turretDegFor(double servoPos) {
         return SERVO_SIGN * (servoPos - SERVO_AT_ZERO) * TURRET_TRAVEL_DEG;
     }
@@ -176,40 +169,35 @@ public class TurretController {
              : (deg > TURRET_LIMIT_DEG ? TURRET_LIMIT_DEG : deg);
     }
 
-    /**
-     * How long the turret needs to settle, as a function of how far it moved.
-     *
-     * A fixed wait does not work here. The servo sweeps its full 1800 deg in a
-     * fixed time, so a 90 deg turret slew takes 180 deg of servo and a 180 deg
-     * slew takes 360 -- several times longer than a small trim. Firing on a
-     * fixed 350 ms would launch mid-swing on any large re-aim.
-     *
-     * MEASURE SERVO_MS_PER_TURRET_DEG on the bench: command a servo 0.0 -> 1.0
-     * and time it. That is 900 deg of turret, so ms_per_deg = time_ms / 900.
-     */
     public static long SETTLE_BASE_MS = 120;
-    /** MEASURED: 900 deg of turret swept in 3060 ms. */
     public static double SERVO_MS_PER_TURRET_DEG = 3.40;
-    /** Encoder agreement that counts as arrived, once the encoder is coupled. */
     public static double ARRIVED_TOLERANCE_DEG = 2.0;
 
-    /**
-     * Is the through-bore encoder mechanically coupled to the turret yet?
-     *
-     * FALSE on an electronics bench, where the encoder is wired and zeroes
-     * happily but never turns. In that state the slip check sees the command
-     * run away from a stationary encoder and isSettled() can NEVER become
-     * true -- the AIM phase times out, re-arms, and the shooters pulse
-     * forever without a ball ever being fed.
-     *
-     * Set TRUE once the encoder actually turns with the turret.
-     */
     public static boolean ENCODER_COUPLED = false;
+
+    // ---- closed loop on the through-bore ----------------------------------
+    //
+    // Open loop asks the servo for a position and assumes it arrives. On this
+    // robot it does not: a fast 95 deg ramp tracks, but a slow 22.5 deg creep
+    // delivers about 1 deg -- slip, deadband, compliance, take your pick. All
+    // three are invisible to an open loop and all three are corrected by the
+    // same thing: there is an encoder on the turret OUTPUT, so measure where
+    // it actually is and trim the command until it agrees.
+    //
+    // servoTrim is that correction. It is an offset on top of the open-loop
+    // position, NOT a replacement for it, so a sane command is still issued
+    // even if the loop is off or the encoder stops reading.
+    public static boolean CLOSED_LOOP = false;      // off until signs are verified
+    public static double CL_KP        = 0.35;       // fraction of error per loop
+    public static double CL_TOL_DEG   = 0.75;       // inside this, stop correcting
+    public static double CL_MAX_TRIM  = 0.080;      // servo units, 36 deg of authority
+
+    private double servoTrim = 0.0;
+    private boolean clSaturated = false;
 
     private long moveStartMs = 0;
     private double lastMoveDeg = 0;
 
-    /** Point the turret. Feed ShooterRed/Blue turretDeg straight in. */
     public void setTurretDeg(double turretDeg) {
         double next = clampTurret(turretDeg);
         double delta = Math.abs(next - commandedDeg);
@@ -218,23 +206,57 @@ public class TurretController {
         if (delta > 0.25) {
             lastMoveDeg = delta;
             moveStartMs = System.currentTimeMillis();
+            // A new target invalidates the trim earned at the old one. Keeping
+            // it would carry one position's slip into the next.
+            servoTrim = 0.0;
+            clSaturated = false;
         }
         commandedDeg = next;
-        servo.setPosition(servoPositionFor(commandedDeg));
+        writeServo();
     }
 
-    /** Milliseconds the last commanded move should need. */
+    private void writeServo() {
+        double pos = servoPositionFor(commandedDeg) + servoTrim;
+        servo.setPosition(pos < 0 ? 0 : (pos > 1 ? 1 : pos));
+    }
+
+    // Nudge the command until the ENCODER agrees with the target. Bounded by
+    // CL_MAX_TRIM so a wrong ENCODER_SIGN cannot run away -- it saturates and
+    // says so instead, which is the failure you want from a loop whose sign
+    // you have not yet proved.
+    private void serviceClosedLoop() {
+        if (!CLOSED_LOOP || !ENCODER_COUPLED || !encoderZeroed) return;
+        if (homeState != HomeState.HOMED) return;      // homing owns the servo
+
+        double m = getMeasuredDeg();
+        if (Double.isNaN(m)) return;
+
+        double err = commandedDeg - m;
+        if (Math.abs(err) <= CL_TOL_DEG) return;
+
+        servoTrim += SERVO_SIGN * CL_KP * err / TURRET_TRAVEL_DEG;
+        if (servoTrim >  CL_MAX_TRIM) { servoTrim =  CL_MAX_TRIM; clSaturated = true; }
+        else if (servoTrim < -CL_MAX_TRIM) { servoTrim = -CL_MAX_TRIM; clSaturated = true; }
+        else clSaturated = false;
+
+        writeServo();
+    }
+
+    public double getServoTrim() { return servoTrim; }
+    public boolean isTrimSaturated() { return clSaturated; }
+
     public long settleTimeMs() {
         return SETTLE_BASE_MS + (long) (lastMoveDeg * SERVO_MS_PER_TURRET_DEG);
     }
 
-    /**
-     * True when the turret should be on target. Uses the encoder when it is
-     * zeroed and coupled -- that is the real answer -- and falls back to the
-     * move-size estimate otherwise, which is the case on a bench.
-     */
     public boolean isSettled() {
         if (System.currentTimeMillis() - moveStartMs < settleTimeMs()) return false;
+        // With the loop running, "settled" means the ENCODER agrees -- not
+        // that a timer expired. A clock cannot tell you the turret slipped.
+        if (CLOSED_LOOP && ENCODER_COUPLED && encoderZeroed) {
+            double s = getSlipDeg();
+            return Double.isNaN(s) || Math.abs(s) <= ARRIVED_TOLERANCE_DEG;
+        }
         if (!ENCODER_COUPLED) return true;            // bench: trust the clock
         double slip = getSlipDeg();
         if (Double.isNaN(slip)) return true;          // not zeroed yet
@@ -243,20 +265,18 @@ public class TurretController {
 
     public double getCommandedDeg() { return commandedDeg; }
 
-    /** Turret angle as the through-bore encoder sees it, degrees. */
     public double getMeasuredDeg() {
         if (!encoderZeroed) return Double.NaN;
         int ticks = robot.intakeMot.getCurrentPosition() - encoderZeroTicks;
-        return ENCODER_SIGN * ticks * 360.0 / ENCODER_TICKS_PER_REV;
+        // The encoder was zeroed AT THE SWITCH, where the turret really sits
+        // at HOME_OFFSET_DEG. Without this term getSlipDeg() would read a
+        // permanent HOME_OFFSET_DEG of slip and isSettled() would never agree.
+        return ENCODER_SIGN * ticks * 360.0 / ENCODER_TICKS_PER_REV
+                + HOME_OFFSET_DEG;
     }
 
-    /** Raw encoder, for calibration. */
     public int getRawEncoderTicks() { return robot.intakeMot.getCurrentPosition(); }
 
-    /**
-     * How far the turret actually is from where it was told to go. NaN until
-     * homed. Large values mean slip, stall, or a wrong SERVO_AT_ZERO.
-     */
     public double getSlipDeg() {
         double m = getMeasuredDeg();
         return Double.isNaN(m) ? Double.NaN : m - commandedDeg;
@@ -271,50 +291,30 @@ public class TurretController {
 
     // ---- homing ----------------------------------------------------------
 
-    /** Call once at init. Commands turret-forward and waits to confirm. */
     public void beginHoming() {
         homeState = HomeState.VERIFYING;
         phaseStartMs = System.currentTimeMillis();
         searchOffsetDeg = 0.0;
-        searchDir = +1;
+        searchStep = 0;
         setTurretDeg(0.0);
     }
 
-    /** Restart a bounded search. Bind to the re-home button. */
     public void beginSearch() {
         homeState = HomeState.SEARCHING;
         phaseStartMs = System.currentTimeMillis();
         lastStepMs = 0;
         searchOffsetDeg = 0.0;
-        searchDir = +1;
+        searchStep = 0;
     }
 
-    /** Non-blocking. Call every loop. */
     public void update() {
         long now = System.currentTimeMillis();
         switch (homeState) {
             case VERIFYING:
                 if (now - phaseStartMs < VERIFY_SETTLE_MS) break;
                 if (isAtHomeSwitch()) {
-                    zeroEncoderHere();
-                    homeState = HomeState.HOMED;
+                    adoptHomeAt(servoPositionFor(0.0));
                 } else {
-                    /*
-                     * Start the bounded search straight away.
-                     *
-                     * This used to stop at NEEDS_SEARCH and wait for a driver
-                     * to press RB. In TeleOp that is recoverable; in
-                     * AUTONOMOUS there is nobody to press it, so a turret that
-                     * failed to confirm home would leave REQUIRE_HOMED
-                     * blocking every shooting state for the whole period,
-                     * silently.
-                     *
-                     * It adds no new kind of motion -- beginHoming() has
-                     * already commanded the turret to 0 -- and the search is
-                     * bounded to SEARCH_SPAN_DEG either side, ending in HOMED
-                     * or FAILED. FAILED is terminal, so this cannot loop.
-                     * RB still forces a fresh search at any time.
-                     */
                     homeState = HomeState.NEEDS_SEARCH;
                     beginSearch();
                 }
@@ -327,21 +327,27 @@ public class TurretController {
                 if (isAtHomeSwitch()) {
                     // The offset we had to add IS the correction to the
                     // stored constant. Fold it in so it is right from now on.
-                    SERVO_AT_ZERO = servoPositionFor(searchOffsetDeg);
-                    commandedDeg = 0.0;
-                    zeroEncoderHere();
-                    homeState = HomeState.HOMED;
+                    adoptHomeAt(servoPositionFor(searchOffsetDeg));
                     break;
                 }
 
-                // Walk outward alternating sides: 0, +s, -s, +2s, -2s, ...
-                if (searchDir > 0) {
-                    searchOffsetDeg = Math.abs(searchOffsetDeg) + SEARCH_STEP_DEG;
-                    searchDir = -1;
-                } else {
-                    searchOffsetDeg = -Math.abs(searchOffsetDeg);
-                    searchDir = +1;
-                }
+                // Walk outward, alternating sides, FIRST_DIR first:
+                //   +1 -> +s, -s, +2s, -2s, ...
+                //   -1 -> -s, +s, -2s, +2s, ...
+                //
+                // The old version toggled a flag and negated the running
+                // offset, which looks equivalent and is not: starting on the
+                // negative side it computed -|0| = 0, burned a step commanding
+                // nowhere, and then went positive. Both settings produced the
+                // SAME sweep, one step apart -- which is exactly what the
+                // robot did on 13 Nov. Deriving each offset from a counter
+                // cannot drift like that.
+                searchStep++;
+                int ring = (searchStep + 1) / 2;          // 1,1,2,2,3,3,...
+                int side = (searchStep % 2 == 1)          // first, second, ...
+                        ? (SEARCH_FIRST_DIR >= 0 ? +1 : -1)
+                        : (SEARCH_FIRST_DIR >= 0 ? -1 : +1);
+                searchOffsetDeg = side * ring * SEARCH_STEP_DEG;
                 if (Math.abs(searchOffsetDeg) > SEARCH_SPAN_DEG) {
                     homeState = HomeState.FAILED;
                     break;
@@ -353,6 +359,20 @@ public class TurretController {
             default:
                 break;
         }
+        serviceClosedLoop();
+    }
+
+    // The switch has been found at servoPosAtSwitch. The turret is therefore
+    // physically at HOME_OFFSET_DEG, not at zero -- so back the stored zero
+    // off by that much and record that we are standing at the offset, not at
+    // forward. Compute servoPosAtSwitch BEFORE calling: it is read with the
+    // OLD SERVO_AT_ZERO, which is where the servo actually is.
+    private void adoptHomeAt(double servoPosAtSwitch) {
+        SERVO_AT_ZERO = servoPosAtSwitch
+                - SERVO_SIGN * HOME_OFFSET_DEG / TURRET_TRAVEL_DEG;
+        commandedDeg = HOME_OFFSET_DEG;
+        zeroEncoderHere();
+        homeState = HomeState.HOMED;
     }
 
     private void zeroEncoderHere() {
@@ -363,7 +383,6 @@ public class TurretController {
     public HomeState getHomeState() { return homeState; }
     public boolean isHomed() { return homeState == HomeState.HOMED; }
 
-    /** Human-readable prompt for the driver station. */
     public String getHomeMessage() {
         switch (homeState) {
             case NOT_HOMED:    return "turret not homed - call beginHoming()";
@@ -390,5 +409,3 @@ public class TurretController {
         t.addData("Home switch", isAtHomeSwitch() ? "AT HOME" : "off");
     }
 }
-
-

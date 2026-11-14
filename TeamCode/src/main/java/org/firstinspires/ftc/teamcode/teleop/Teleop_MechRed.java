@@ -1,8 +1,15 @@
 package org.firstinspires.ftc.teamcode.teleop;
 
+import com.pedropathing.api.Paths;
+import com.pedropathing.follower.Follower;
+import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.teamcode.field.MatchState;
+import org.firstinspires.ftc.teamcode.field.Red;
+import org.firstinspires.ftc.teamcode.robot.BallSeek;
+import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.robot.MechController;
 import org.firstinspires.ftc.teamcode.robot.MechState;
 import org.firstinspires.ftc.teamcode.robot.RobotHardware;
@@ -10,51 +17,11 @@ import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 import org.firstinspires.ftc.teamcode.robot.TurretController;
 import org.firstinspires.ftc.teamcode.robot.VisionController;
 
-/**
- * RED alliance mechanism TeleOp. Bench version: no drivetrain, no Pedro.
- *
- * The pose normally comes from follower.getPose(). Here it is FAKE: either a
- * preset from the POSES table below, or BENCH_X/Y/HEADING. Nothing reads the
- * Pinpoint -- an earlier version of this comment claimed it did, and it never
- * has. Swap updatePoseFromSource() for the follower call when this moves onto
- * the robot.
- *
- * CONTROLS
- *   gamepad1  A intake field   X intake flower   B idle   Y vision test
- *             dpad up/down  bench: +1 pollen / +1 nectar
- *             dpad left     bench: clear inventory to 0
- *             dpad right    bench: toggle INTAKE_FLOWER_SHOOT_HIVE /
- *                           INTAKE_FLOWER_SHOOT_FLOWER
- *             back / LB     next / previous BENCH POSE preset
- *             RB drive to nearest ball (Batch 3 - not wired yet)
- *   gamepad2  A shoot hive     X shoot flower pollen   B idle
- *             Y shoot flower nectar (one ball)
- *             dpad up/down  partner scored nectar / pollen
- *             dpad left     reset CELL estimate
- *             RB            re-home turret
- *             LB (hold)     manual turret on left stick X
- *             RT            intake flower then shoot hive
- *             LT            intake flower then shoot flower
- */
 @TeleOp(name = "TeleopMech RED", group = "Test")
-public class TeleopMechRed extends OpMode {
+public class Teleop_MechRed extends OpMode {
 
-    /** Bench pose used when USE_POSE_PRESETS is false. PEDRO inches. */
     public static double BENCH_X = 54.0, BENCH_Y = 114.0, BENCH_HEADING_DEG = 2.7;
 
-    /*
-     * BENCH POSE PRESETS -- one build instead of seventeen.
-     *
-     * The FSM takes its pose from constants, so testing a pose used to mean
-     * edit, rebuild, re-push. The full P1-P17 sweep was therefore seventeen
-     * rebuilds, which is not a test plan anyone runs. These are the same
-     * coordinates, cycled with a button.
-     *
-     * Derived from the zone rectangles in ShooterAdapter, so they are exact.
-     * Zone bounds are inclusive on all four sides.
-     *
-     * Set USE_POSE_PRESETS false to go back to BENCH_X/Y/HEADING.
-     */
     public static boolean USE_POSE_PRESETS = true;
 
     private static final double[][] POSES = {
@@ -85,6 +52,12 @@ public class TeleopMechRed extends OpMode {
     };
     private int poseIdx = 0;
 
+    // Autonomous end pose, carried into TeleOp. Static until a follower
+    // feeds a live one -- speed reads 0, so the steadiness gate is not
+    // meaningful here.
+    private double seedX, seedY, seedH;
+    private boolean seeded = false;
+
     private RobotHardware robot;
     private MechController mech;
     private VisionController vision;
@@ -107,11 +80,16 @@ public class TeleopMechRed extends OpMode {
         mech.setState(MechState.START);
         // Beds to the resting pattern now, not when an intake state is
         // first entered. update() does not run until play is pressed.
-        mech.initPositions();
+        // The arm's state is inherited, not assumed. After an autonomous it is
+        // already deployed; from a cold start it is stowed, and the scoop sits
+        // at a pre-deploy position that only exists while it is.
+        mech.initPositions(MatchState.isFresh(Red.ALLIANCE) && MatchState.deployed);
 
         // Commands the turret to forward and confirms on the limit switch.
         // Does not sweep; see TurretController for why.
         turret.beginHoming();
+
+        follower = Constants.create(hardwareMap);
 
         telemetry.addLine("RED alliance. Homing turret...");
         telemetry.update();
@@ -130,7 +108,29 @@ public class TeleopMechRed extends OpMode {
         telemetry.update();
     }
 
-    @Override public void start() { mech.setState(MechState.IDLE); }
+    @Override public void start() {
+        // Inherit autonomous's inventory when it ran in this process and
+        // recently enough. Without the freshness check a practice TeleOp
+        // would start believing it holds the last match's balls.
+        if (MatchState.isFresh(Red.ALLIANCE)) {
+            mech.countPollen = MatchState.countPollen;
+            mech.countNectar = MatchState.countNectar;
+            mech.cellPollenIn = MatchState.cellPollenIn;
+            mech.cellNectarIn = MatchState.cellNectarIn;
+            // Seeded ONCE. Reading MatchState every loop looked like pose
+            // tracking but is a frozen value, and isFresh() goes false after
+            // FRESH_FOR_MS -- two minutes, the length of a TeleOp -- so the
+            // believed position would jump to a bench preset mid-match.
+            seedX = MatchState.poseX; seedY = MatchState.poseY;
+            seedH = MatchState.headingDeg; seeded = true;
+        }
+        // Hand the inherited pose to the follower. Pedro does not carry pose
+        // across OpModes itself.
+        if (follower != null) {
+            follower.setPose(new Pose(seedX, seedY, Math.toRadians(seedH)));
+        }
+        mech.setState(MechState.IDLE);
+    }
 
     @Override public void loop() {
         updatePoseFromSource();
@@ -210,6 +210,7 @@ public class TeleopMechRed extends OpMode {
         p2du = gamepad2.dpad_up; p2dd = gamepad2.dpad_down;
         p2dl = gamepad2.dpad_left; p2rb = gamepad2.right_bumper;
 
+        serviceDrive();
         mech.update();
         // Before allTelemetry(), which calls telemetry.update() -- so this
         // lands at the top of the screen where you are already looking.
@@ -218,19 +219,27 @@ public class TeleopMechRed extends OpMode {
                         POSE_NAMES[poseIdx], POSES[poseIdx][0],
                         POSES[poseIdx][1], POSES[poseIdx][2])
                 : "fixed BENCH_X/Y -- presets off");
+        if (MatchState.isFresh(Red.ALLIANCE)) {
+            telemetry.addData("From auto", MatchState.summary(Red.ALLIANCE));
+        }
         mech.allTelemetry();
     }
 
-    /**
-     * On the robot this becomes:
-     *     Pose p = follower.getPose();
-     *     mech.updatePose(p.getX(), p.getY(), Math.toDegrees(p.getHeading()));
-     * Pedro already reports in the frame the shooter classes expect, so there
-     * is no conversion here.
-     */
     private void updatePoseFromSource() {
+        // A real follower is the only LIVE source; everything else here is a
+        // fixed number, which reads as 0 in/s and defeats the steadiness
+        // gate. Presets stay for bench work, where there is no drivetrain.
+        if (follower != null) {
+            Pose p = follower.pose();
+            double hd = Math.toDegrees(p.heading());
+            mech.updatePose(p.x(), p.y(), hd);
+            vision.setPose(p.x(), p.y(), hd);
+            return;
+        }
         double x = BENCH_X, y = BENCH_Y, h = BENCH_HEADING_DEG;
-        if (USE_POSE_PRESETS) {
+        if (seeded) {
+            x = seedX; y = seedY; h = seedH;
+        } else if (USE_POSE_PRESETS) {
             x = POSES[poseIdx][0]; y = POSES[poseIdx][1]; h = POSES[poseIdx][2];
         }
         mech.updatePose(x, y, h);
@@ -243,7 +252,58 @@ public class TeleopMechRed extends OpMode {
         if (mech != null) mech.stopAll();
         if (vision != null) vision.stop();
     }
-}
 
+    // ---- drivetrain ------------------------------------------------------
+    // TeleOp had no drivetrain at all. Pedro 3 drives manually with
+    // follower.manual(fwd, lateral, turn) and follower.update(); mode()
+    // reports MANUAL while it does. Null until Constants.create() is
+    // finished, and everything below is skipped in that case so the bench
+    // workflow (fake pose presets, no motors) still works.
+    private Follower follower;
+    private boolean p1rb = false;
+    private boolean seeking = false;
 
+    private void serviceDrive() {
+        if (follower == null) return;
+        boolean rb = gamepad1.right_bumper;
+        // Pressing RB means "go get that ball", so it also commands the
+        // state that collects -- and that is the state the ball detector is
+        // enabled in, so the camera is looking when it is asked.
+        if (rb) {
+            if (!p1rb) mech.setState(MechState.INTAKE_FIELD);
+            // KEEP TRYING while held, not just on the press. Coming from a
+            // state where the detector was off, latest is null and the first
+            // attempt always fails: the state change does not reach
+            // serviceBallVision() until mech.update(), which runs AFTER
+            // this, and the camera needs a frame after that. A rising-edge
+            // retry would give up before the detector ever answered.
+            //
+            // Also re-targets once a leg finishes -- the next ball is only
+            // visible from where the last one left the robot.
+            if (!seeking || !follower.isBusy()) seekBall();
+        } else {
+            seeking = false;
+        }
+        if (!seeking) {
+            follower.manual(-gamepad1.left_stick_y, gamepad1.left_stick_x,
+                            gamepad1.right_stick_x);
+        }
+        follower.update();
+        p1rb = rb;
+    }
 
+    private void seekBall() {
+        Pose here = follower.pose();
+        // The same helper autonomous uses, so the intake offset and the
+        // zero-length-leg guard cannot diverge between the two again. This
+        // used to drive the robot CENTRE onto the ball, which carried the
+        // intake 10 in past it.
+        Pose to = BallSeek.targetFor(here,
+                vision.nearestWantedBall(mech.allianceTeamNectar()));
+        if (to == null) {
+            seeking = false;
+            return;
+        }
+        follower.follow(Paths.line(here, to).linear(here, to));
+        seeking = true;
+    }}

@@ -12,29 +12,6 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
 import java.util.List;
 
-/**
- * Camera and sensor access for RoboRoar.
- * Color IDs: 0=unknown/clear, 1=yellow pollen, 2=red nectar, 3=blue nectar.
- *
- * CAMERA ROLES
- *   Limelight 3A  turret-mounted, 45 deg UP. Sees the HIVE. AprilTags only.
- *   Logitech C270 rear, fixed, 40 deg DOWN. Sees the tiles and the FLOWER.
- *
- * RAISED-CELL DETECTION
- *   Each CELL carries its own 4-tag cluster on its underside, facing the
- *   tiles. When the seesaw drops a CELL it inverts, so that cluster ends up
- *   facing the ceiling and the robot cannot see it. Seeing a tag at all is
- *   therefore what tells you which CELL is raised -- no ty threshold, no
- *   calibration, no ambiguity:
- *
- *       tags 30-33 visible -> RED far side is up
- *       tags 34-37 visible -> RED audience side is up
- *       tags 42-45 visible -> BLUE far side is up
- *       tags 38-41 visible -> BLUE audience side is up
- *
- *   Still filtered over several frames, because a single bad detection
- *   should not re-point the turret.
- */
 public class VisionController {
 
     private final RobotHardware robot;
@@ -45,9 +22,7 @@ public class VisionController {
 
     private static final double DISTANCE_BALL_MM = 20.0;
 
-    /** Consecutive agreeing frames before a target is trusted. */
     public static int REQUIRED_STABLE_FRAMES = 4;
-    /** Frames without any of our tags before the target is dropped. */
     public static int LOST_FRAMES_TO_CLEAR = 10;
 
     private ShooterAdapter.Target raisedTarget = null;
@@ -64,25 +39,6 @@ public class VisionController {
 
     // ---- C270 / VisionPortal ---------------------------------------------
 
-    /**
-     * The C270 does NOT see the HIVE, so it is not used for scoring tags.
-     * The processor is built anyway so the portal has something to run and so
-     * any wall tags in view can assist localisation. Ball and flower detection
-     * replace this in BallDetector -- see Batch 3.
-     */
-    /**
-     * Run the AprilTag processor on the C270 as well as the ball detector.
-     *
-     * OFF by default, and it costs real loop time to turn on. The C270 looks
-     * DOWN at the tiles and cannot see the HIVE, so it contributes nothing to
-     * scoring; the only tags it might catch are wall tags, and localisation
-     * comes from the Pinpoint anyway. Measured 55.7 ms average loop with both
-     * processors running, against a 30 ms budget.
-     *
-     * The drawing options were the worst of it -- axes, cube projection and
-     * outlines are rendered per tag per frame purely for a preview nobody
-     * watches during a match.
-     */
     public static boolean ENABLE_C270_APRILTAG = false;
 
     public void initAprilTag() {
@@ -111,16 +67,10 @@ public class VisionController {
 
     public BallDetector getBallDetector() { return ballDetector; }
 
-    /**
-     * Feed the Pedro pose down so ball detections can be reported in field
-     * coordinates. Without it ranges and bearings still work, but fieldX/fieldY
-     * come back NaN and nothing can path to a ball.
-     */
     public void setPose(double xIn, double yIn, double yawDeg) {
         if (ballDetector != null) ballDetector.setPose(xIn, yIn, yawDeg);
     }
 
-    /** Nearest ball worth collecting, or null. */
     public BallDetector.Detection nearestWantedBall(int allianceNectarColorId) {
         return ballDetector == null ? null : ballDetector.nearestWanted(allianceNectarColorId);
     }
@@ -128,23 +78,34 @@ public class VisionController {
     public AprilTagProcessor getAprilTag() { return aprilTag; }
     public VisionPortal getVisionPortal() { return visionPortal; }
 
+    // Switch the ball detector's per-frame work on and off without touching
+    // the camera. setProcessorEnabled only skips the callback -- the stream
+    // keeps running, so re-enabling is immediate. Stopping the stream would
+    // cost seconds of camera re-init.
+    //
+    // Idempotent: the SDK call is skipped when nothing changed, because this
+    // is driven from the FSM and would otherwise run every loop.
+    public void setBallDetectionEnabled(boolean on) {
+        if (visionPortal == null || ballDetector == null || on == ballDetectionOn) return;
+        // Order matters when switching OFF: stop accepting results first, so
+        // a frame already inside processFrame() is discarded instead of
+        // landing after the processor is disabled.
+        if (!on) ballDetector.setAccepting(false);
+        visionPortal.setProcessorEnabled(ballDetector, on);
+        if (on) ballDetector.setAccepting(true);
+        ballDetectionOn = on;
+    }
+
+    public boolean isBallDetectionEnabled() { return ballDetectionOn; }
+
+    private boolean ballDetectionOn = true;
+
     // ---- Limelight pipelines ---------------------------------------------
 
-    /** Last pipeline commanded, so redundant switches can be skipped. */
     private int currentPipeline = -1;
 
-    /** Pipeline last commanded, or -1 if the Limelight has not been started. */
     public int getCurrentPipeline() { return currentPipeline; }
 
-    /**
-     * Force a pipeline, ignoring the idempotence guard, and restart.
-     *
-     * For the bench only. startHiveAprilTagPipeline() skips the switch when it
-     * believes the Limelight is already on 1 -- which is useless when the
-     * question is whether that belief is true. This re-issues the command
-     * unconditionally so a switch that silently failed can be retried, and so
-     * other indices can be tried without a rebuild.
-     */
     public void forcePipeline(int index) {
         robot.limeLight.setPollRateHz(POLL_RATE_HZ);
         robot.limeLight.pipelineSwitch(index);
@@ -153,46 +114,12 @@ public class VisionController {
         resetRaisedCellFilter();
     }
 
-    /** Is the hub actually talking to the Limelight? The decisive question. */
     public boolean isLimelightConnected() { return robot.limeLight.isConnected(); }
 
-    /** Seconds since the last update. Climbing = connected but not polling. */
     public double limelightAgeSec() { return robot.limeLight.getTimeSinceLastUpdate(); }
 
-    /**
-     * Pipeline 1: AprilTag pipeline aimed at the HIVE.
-     *
-     * Idempotent. Re-commanding the pipeline costs a switch AND wipes the
-     * raised-CELL filter, which then needs REQUIRED_STABLE_FRAMES good frames
-     * before it knows anything again. Since the FSM calls this on every entry
-     * to SHOOTING_HIVE, re-entering a state the Limelight was already serving
-     * used to throw away a perfectly good target for no reason.
-     */
-    /**
-     * How often the hub polls the Limelight. MUST be set BEFORE start().
-     *
-     * This was never called at all. The documented order is
-     * setPollRateHz -> pipelineSwitch -> start, and getting it wrong is a
-     * silent failure: the Limelight runs, its web page shows tags, and the
-     * hub simply never collects them.
-     */
     public static int POLL_RATE_HZ = 100;
 
-    /**
-     * Which Limelight pipeline holds the AprilTag program.
-     *
-     * 1 -- confirmed working. Pipelines 0 and 1 are both configured as
-     * AprilTag on this camera, so either index works; 1 is the one that has
-     * actually been run.
-     *
-     * A constant rather than a literal because the index is a property of the
-     * camera, not of this code. If the pipelines are ever renumbered, change
-     * this to match rather than moving a working pipeline on the Limelight.
-     *
-     * NOTE for anyone debugging "the Limelight sees tags but the robot does
-     * not": the index was NOT the cause of that. See the ID FILTER note in
-     * HANDOFF.md -- a filter excluding 30-45 produces exactly that symptom.
-     */
     public static int HIVE_PIPELINE = 1;
 
     public void startHiveAprilTagPipeline() {
@@ -204,54 +131,13 @@ public class VisionController {
         resetRaisedCellFilter();
     }
 
-    /**
-     * Pipeline 4 used to be the flower pollen count. That job belongs to the
-     * C270 now -- the Limelight looks UP and cannot see a flower. Kept so
-     * existing calls still compile; it simply parks the Limelight.
-     */
     public void startFlowerCountPipeline() {
-        /*
-         * DELIBERATE NO-OP.
-         *
-         * This used to switch the Limelight to pipeline 4 and reset the
-         * raised-CELL filter. The FSM calls it on entry to every flower
-         * intake state, so collecting from a flower parked the Limelight and
-         * threw away the CELL target -- and INTAKE_FLOWER_SHOOT_HIVE then
-         * handed straight over to SHOOTING_HIVE, which had to switch back and
-         * re-acquire four stable frames before it could aim.
-         *
-         * The C270 counts flower pollen now. The Limelight has no job during
-         * a flower collection, so the useful thing for it to do is keep
-         * watching the HIVE: by the time the handoff fires, the target is
-         * already known and stable.
-         */
     }
 
     // ---- raised-cell detection -------------------------------------------
 
-    /**
-     * Call every loop while the Limelight is on pipeline 1. Returns the CELL
-     * believed to be raised, or null while unknown.
-     */
     public ShooterAdapter.Target updateRaisedTarget() {
         LLResult result = robot.limeLight.getLatestResult();
-        /*
-         * DO NOT GATE ON isValid().
-         *
-         * isValid() reflects whether the pipeline has a PRIMARY TARGET -- the
-         * thing tx/ty are measured against. An AprilTag pipeline that is
-         * tracking fiducials perfectly well reports tx = ty = 0 and
-         * isValid() = false whenever no single tag has been designated
-         * primary, which is the normal state when you are simply reading IDs.
-         *
-         * This method does not use tx or ty at all. It only asks WHICH tags
-         * are in frame, because a cluster being visible is what identifies
-         * the raised CELL. Requiring isValid() first threw away every good
-         * detection: the Limelight web page showed the tags, and the robot
-         * saw nothing.
-         *
-         * Ask the fiducial list directly. It is the only thing we need.
-         */
         if (result == null) {
             noteLost();
             return raisedTarget;
@@ -259,19 +145,6 @@ public class VisionController {
 
         List<LLResultTypes.FiducialResult> tags = result.getFiducialResults();
 
-        /*
-         * RECORD WHAT WE SAW, before filtering it.
-         *
-         * targetForTagId() returns null for any ID that is not ours -- 30-37
-         * for red, 38-45 for blue. A tag of ANY other ID is counted by the
-         * Limelight, shown by HardwareCheck's "tag ids" line, and then
-         * silently dropped here. The result is a robot that reports
-         * "(by zone)" while a tag is plainly in view, which is
-         * indistinguishable from the camera not working at all.
-         *
-         * Keeping the raw IDs separates the two: raw empty means nothing is
-         * reaching us, raw non-empty with no ours means wrong tag.
-         */
         lastRawIds = "";
         lastRawCount = 0;
         if (tags != null) {
@@ -308,22 +181,6 @@ public class VisionController {
                 ? ShooterAdapter.Target.SCORING_SIDE : ShooterAdapter.Target.AUDIENCE_SIDE;
 
         if (vote == candidate) {
-            /*
-             * CLAMPED at the threshold. It used to run away -- measured 290
-             * on the field, against a requirement of 4.
-             *
-             * Harmless to the LOCK, because the hard clear is driven by
-             * lostFrames, not by this decaying back under the threshold. But
-             * it ruins the thing the telemetry line exists for. "290/4" is
-             * not a gauge, and worse, a genuinely flickering signal that
-             * alternates good and bad frames sits up at 290 and reports rock
-             * solid confidence it does not have.
-             *
-             * Clamped, a steady lock reads 4/4 and a flickering one visibly
-             * hovers below it -- and recovery after a miss starts from 4
-             * rather than from several hundred, so the gauge tracks what the
-             * camera is doing right now.
-             */
             if (candidateFrames < REQUIRED_STABLE_FRAMES) candidateFrames++;
         } else {
             candidate = vote;
@@ -333,24 +190,6 @@ public class VisionController {
         return raisedTarget;
     }
 
-    /**
-     * DECAY the confidence, do not destroy it.
-     *
-     * This used to set candidateFrames = 0 on every lost frame, and that made
-     * the filter unable to converge at all in normal operation.
-     *
-     * MechController polls at roughly 150 Hz; the camera runs at 40 fps. Most
-     * polls therefore land between frames, and any that come back without
-     * fiducials reset the counter to zero -- so REQUIRED_STABLE_FRAMES
-     * consecutive good frames never happened and raisedTarget stayed null
-     * forever, while HardwareCheck (which reads getFiducialResults() directly
-     * and skips this filter) showed the tags perfectly.
-     *
-     * Decrementing instead means a detection converges whenever good frames
-     * outnumber bad, which is what "stable" should have meant. The candidate
-     * is only discarded after LOST_FRAMES_TO_CLEAR consecutive misses, which
-     * is the real "the CELL is gone" signal.
-     */
     private void noteLost() {
         lastTagCount = 0;
         lostFrames++;
@@ -362,11 +201,9 @@ public class VisionController {
         }
     }
 
-    /** Filter progress, for telemetry: frames agreed out of those required. */
     public int getCandidateFrames() { return candidateFrames; }
     public int getLostFrames() { return lostFrames; }
 
-    /** Every fiducial ID the Limelight reported last frame, ours or not. */
     private String lastRawIds = "";
     private int lastRawCount = 0;
     public String getLastRawIds() { return lastRawIds; }
@@ -387,14 +224,6 @@ public class VisionController {
 
     // ---- flower pollen count ----------------------------------------------
 
-    /**
-     * POLLEN the C270 can see. While the robot is at a flower this IS the
-     * flower count -- balls sit on the tiles there too, so being at the
-     * flower is what distinguishes flower pollen from field pollen.
-     *
-     * Returns -1 when the camera has not started -- the FSM treats that as
-     * VISION_UNAVAILABLE and stops rather than intaking blindly.
-     */
     public int getFlowerPollenCount() {
         if (ballDetector == null) return -1;      // camera not started
         return ballDetector.pollenInView();
@@ -431,17 +260,6 @@ public class VisionController {
                              sensorR.getDistance(DistanceUnit.MM));
     }
 
-    /**
-     * Two sensors per station exist because the balls are PERFORATED. One can
-     * be looking through a hole and read nothing while the other sees the ball
-     * perfectly well, so a zero from one side is not evidence of anything --
-     * the other side wins.
-     *
-     * When both see something and disagree on the colour, trust the one that
-     * is CLOSER. A nearer reading fills more of the sensor's field and is less
-     * likely to be catching an edge, a neighbouring ball, or the tunnel wall.
-     * This used to return 0 and throw the reading away.
-     */
     private int combineColors(int left, int right, double distL, double distR) {
         if (left == 0) return right;
         if (right == 0) return left;
@@ -463,6 +281,3 @@ public class VisionController {
         return 0;
     }
 }
-
-
-

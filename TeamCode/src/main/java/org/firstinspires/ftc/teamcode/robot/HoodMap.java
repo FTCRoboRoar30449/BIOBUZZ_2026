@@ -1,29 +1,5 @@
 package org.firstinspires.ftc.teamcode.robot;
 
-/**
- * Hood angle to servo position.
- *
- * Both hoods are goBILDA 2000-series 5-turn servos (1800 deg of travel) driving
- * herringbone gear pairs:
- *
- *     POLLEN   158 hood teeth : 20 servo teeth  ->  7.900 servo turns per hood turn
- *     NECTAR   176 hood teeth : 19 servo teeth  ->  9.263 servo turns per hood turn
- *
- * So sweeping the hood 55 -> 80 deg takes 197.5 deg of pollen servo and 231.6 deg
- * of nectar servo -- 11.0% and 12.9% of the servo's travel. At roughly 2000 PWM
- * steps that is about 0.11 deg of hood per step, against a hood tolerance of
- * +/-4-6 deg. Resolution is a non-issue.
- *
- * ONE constant per hood needs measuring: the servo position at hood 55 deg. The
- * span is fixed by the gear ratio, so BenchCalibration only has to find that
- * single reference, not both ends.
- *
- * Hood angle is measured FROM HORIZONTAL, matching ShooterRed/ShooterBlue and
- * ShooterCalibration. 80 deg is the steep lob used at short range; 70 deg is the
- * flattest the tables ever ask for. Do not "correct" this to from-vertical -- the
- * tables put hood 80 at 15-23 in and hood 70 at 30-39 in, which only makes sense
- * measured from horizontal.
- */
 public final class HoodMap {
 
     private HoodMap() {}
@@ -33,52 +9,72 @@ public final class HoodMap {
     public static final double POLLEN_GEAR_RATIO = 158.0 / 20.0;   // 7.900
     public static final double NECTAR_GEAR_RATIO = 176.0 / 19.0;   // 9.2632
 
-    /** Servo position change per degree of hood. */
-    public static final double POLLEN_POS_PER_DEG = POLLEN_GEAR_RATIO / SERVO_TRAVEL_DEG; // 0.0043889
-    public static final double NECTAR_POS_PER_DEG = NECTAR_GEAR_RATIO / SERVO_TRAVEL_DEG; // 0.0051462
+    // PROVISIONAL, from the mechanical limits measured 13 Nov:
+    //     pollen  top 0.495 .. bottom 0.355   span 0.140
+    //     nectar  top 0.516 .. bottom 0.706   span 0.190
+    //
+    // The limits are solid. The ANGLES at them are not -- they were eyeballed
+    // as roughly 55 and 80, so these ratios are span/25 on an assumption, and
+    // carry whatever error is in that 25. They are still better than the old
+    // derived values (0.00439 and 0.00515, which were 28% and 48% lower),
+    // because those came from assumed gearing and an assumed 1800 deg servo
+    // and were never checked against anything.
+    //
+    // TO FINISH: put a protractor on each hood, find the position at a real
+    // 55 and a real 80, and set POS_AT_55 and these from that. Until then
+    // every hood angle carries the error in the eyeballed endpoints.
+    //
+    // Keep the gear ratios above for reference, but do not compute from them.
+    public static double POLLEN_POS_PER_DEG = 0.00560;
+    public static double NECTAR_POS_PER_DEG = 0.00760;
 
     public static final double HOOD_MIN_DEG = 55.0;
     public static final double HOOD_MAX_DEG = 80.0;
 
-    // ---- CALIBRATE with BenchCalibration ---------------------------------
-    /**
-     * STILL UNMEASURED -- the servo position that puts each hood at exactly
-     * 55 deg. These are placeholders chosen only to CENTRE each sweep in the
-     * servo's 0..1 range, so nothing clamps before the real numbers arrive:
-     *
-     *   pollen  sign -1, span 0.110  ->  55 at 0.555, 80 at 0.445
-     *   nectar  sign +1, span 0.129  ->  55 at 0.436, 80 at 0.564
-     *
-     * The old 0.100 for pollen does not even fit: with sign -1 it puts 80 deg
-     * at -0.010 and every steep shot silently clamps to 0.
-     */
-    public static double POLLEN_POS_AT_55 = 0.555;
-    public static double NECTAR_POS_AT_55 = 0.436;
+    // ---- CALIBRATE with RobotSetup steps 9-10 ----------------------------
+    //
+    // Measured stops, 13 Nov:  pollen 0.335..0.475   nectar 0.466..0.636
+    // Spans 31.9 and 33.0 deg of hood -- both clear the 25 deg the 55-80
+    // table needs.
+    //
+    // The old values (0.555 / 0.436) were OUTSIDE those ranges, so every hood
+    // command clamped against a stop and the whole table was unreachable.
+    //
+    // The TOP mechanical limit of each hood, taken as 55 deg provisionally.
+    // Treating a hard stop as the shallow end of the table is a guess: the
+    // stop is wherever the mechanism ends, not wherever 55 deg happens to be.
+    // Good enough to command from, not good enough to shoot on.
+    //
+    // Two earlier stop sweeps disagree with these, and the disagreement is
+    // worth resolving before trusting any of it:
+    //     pollen  step 3 gave 0.335..0.475, this gave 0.355..0.495
+    //             -- same span 0.140, shifted 0.020. An offset, so probably
+    //             one sweep stopped short at both ends.
+    //     nectar  step 3 gave 0.466..0.636 (span 0.170), this 0.516..0.706
+    //             (span 0.190). DIFFERENT span, which an offset cannot
+    //             explain -- one of the two found a stop the other did not.
+    public static double POLLEN_POS_AT_55 = 0.495;
+    public static double NECTAR_POS_AT_55 = 0.516;
 
-    /**
-     * MEASURED on the bench. +1 if increasing servo position increases hood
-     * angle. The two hoods are mirrored on the robot and genuinely disagree,
-     * which is exactly why this was worth measuring rather than assuming:
-     *
-     *   pollen  raising the servo drives 80 -> 55, angle DECREASES  -> -1
-     *   nectar  raising the servo drives 55 -> 80, angle INCREASES  -> +1
-     */
     public static int POLLEN_SIGN = -1;
     public static int NECTAR_SIGN = +1;
 
-    /** Servo position for a pollen hood angle, clamped to the servo's range. */
+    // Where each hood is commanded at INIT: its BOTTOM limit, 80 deg.
+    // Confirmed 14 Nov, and each equals pollenPos(80) / nectarPos(80) exactly,
+    // so the table and the init agree by construction rather than by luck.
+    public static double POLLEN_INIT_POS = 0.355;
+    public static double NECTAR_INIT_POS = 0.706;
+
     public static double pollenPos(double hoodDeg) {
         double h = clampHood(hoodDeg);
         return clamp01(POLLEN_POS_AT_55 + POLLEN_SIGN * (h - HOOD_MIN_DEG) * POLLEN_POS_PER_DEG);
     }
 
-    /** Servo position for a nectar hood angle, clamped to the servo's range. */
     public static double nectarPos(double hoodDeg) {
         double h = clampHood(hoodDeg);
         return clamp01(NECTAR_POS_AT_55 + NECTAR_SIGN * (h - HOOD_MIN_DEG) * NECTAR_POS_PER_DEG);
     }
 
-    /** Inverse, for telemetry: what hood angle does this pollen servo position mean? */
     public static double pollenDeg(double pos) {
         return HOOD_MIN_DEG + POLLEN_SIGN * (pos - POLLEN_POS_AT_55) / POLLEN_POS_PER_DEG;
     }
@@ -87,7 +83,6 @@ public final class HoodMap {
         return HOOD_MIN_DEG + NECTAR_SIGN * (pos - NECTAR_POS_AT_55) / NECTAR_POS_PER_DEG;
     }
 
-    /** True when the whole 55-80 sweep fits inside the servo's 0..1 range. */
     public static boolean pollenRangeFits() {
         double a = POLLEN_POS_AT_55;
         double b = POLLEN_POS_AT_55 + POLLEN_SIGN * (HOOD_MAX_DEG - HOOD_MIN_DEG) * POLLEN_POS_PER_DEG;
