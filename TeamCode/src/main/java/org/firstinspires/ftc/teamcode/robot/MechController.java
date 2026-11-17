@@ -35,11 +35,11 @@ public class MechController {
     private boolean poseValid = false;
 
     // ---- conveyor / storage ----------------------------------------------
-    public static int TICKS_PER_POLLEN_STORAGE = 100;
-    public static int TICKS_PER_NECTAR_STORAGE = 150;
-    public static int TICKS_TO_SHOOT_POLLEN = 300;
-    public static int TICKS_TO_SHOOT_NECTAR = 200;
-    public static int TICKS_TO_SHOOT_BOTH = 300;
+    public static int TICKS_PER_POLLEN_STORAGE = 200;   // measured 14 Nov (was 100)
+    public static int TICKS_PER_NECTAR_STORAGE = 250;   // measured 14 Nov (was 150)
+    public static int TICKS_TO_SHOOT_POLLEN = 400;   // measured 14 Nov (was 300)
+    public static int TICKS_TO_SHOOT_NECTAR = 500;   // measured 14 Nov (was 200)
+    public static int TICKS_TO_SHOOT_BOTH = 500;   // measured 14 Nov (was 300)
     public static final int MAX_CONVEYOR_ROTATION = 300;   // bed servo span, deg
     // Four positions, not a shared pair. These were BED_DISENGAGED = 45 and
     // BED_TRAVEL = 45, applied to both beds mirrored -- which assumes the two
@@ -62,7 +62,14 @@ public class MechController {
 
     public static long REVERSE_INTAKE_TIME_MS = 700;
     private static final long SENSOR_CLEAR_TIMEOUT_MS = 1800;
-    public static double CONVEYOR_POWER = 0.65;
+        // 1.0, measured 14 Nov. The belt would not index reliably below it.
+    //
+    // That is worth knowing rather than just recording: at full power there
+    // is no headroom. Anything that adds friction -- a ball jammed, a cold
+    // belt, a flat battery late in a match -- has nothing left to draw on,
+    // and a belt that stalls does not just index short, it leaves isBusy()
+    // hanging and times the whole shot out.
+    public static double CONVEYOR_POWER = 1.0;
     public static double INTAKE_POWER = 1.0;
 
     // ---- START deployment --------------------------------------------------
@@ -101,7 +108,24 @@ public class MechController {
     // ---- shooting timing / tolerances -------------------------------------
     private static final long SHOOTER_SPINUP_TIMEOUT_MS = 6000;
     private static final long SHOOTER_FEED_TIMEOUT_MS = 2500;
-    public static long SHOOTER_RECOVER_MS = 250;
+    // MEASURED 14 Nov, timed from the lowest point back to within 2%:
+    //     pollen  1727 ms      nectar  760 ms
+    //
+    // 250 was sized for an assumed 38-tick dip and is SEVEN TIMES too short.
+    // Too short is the dangerous direction: the next ball is fed into a wheel
+    // that has not recovered, so the second and later balls of a volley fly
+    // short -- consistently, and in a way that reads as erratic shooting
+    // rather than a timing constant.
+    //
+    // 1750 covers the worst case. That is 0.58 shots/second and 5.2 s for a
+    // four-ball volley, which is a real cost in match terms and the single
+    // biggest lever on cycle time.
+    //
+    // RE-MEASURE ON A CHARGED PACK. Recovery is torque-limited, so it scales
+    // with voltage harder than anything else here; these came from 11.55 V
+    // under load. The pollen/nectar gap (1727 vs 760) is also worth chasing
+    // -- same gains, same target, so it points at flywheel drag.
+    public static long SHOOTER_RECOVER_MS = 1750;
     private static final long FEED_MIN_MS = 150;
     private static final long TURRET_SETTLE_TIMEOUT_MS = 2500;
     public static double SHOOTER_READY_TOLERANCE = 0.95;
@@ -723,8 +747,45 @@ public class MechController {
     private boolean preSpinning = false;
 
     // ---- ball-exit detection by flywheel RPM dip ---------------------------
-    public static double DIP_ENTER = 0.975;   // below this fraction of target = a ball went
-    public static double DIP_EXIT  = 0.990;   // above this, re-arm for the next
+    // MEASURED 14 Nov at 1237 ticks/s commanded. The method needs
+    // spread < trip < ball, and only one motor manages it:
+    //     trip at DIP_ENTER 0.975 = 31 ticks/s,  a ball costs about 38
+    //     nectar  spread 20  ->  20 < 31 < 38    usable
+    //     pollen  spread 40  ->  40 > 31         noise would count as balls
+    //
+    // COUNT_FLOW_BY_DIP is one flag for both, so it stays FALSE and belt
+    // travel remains the only counter. The dip is still shown and counted as
+    // a second witness, and on nectar it is a trustworthy one.
+    //
+    // This is the measurement the bench could not give: on a bare rotor the
+    // spread was 20-100 against a predicted ball of 38, so nothing could be
+    // concluded. With flywheels fitted it can.
+    // MEASURED 14 Nov at 1237 ticks/s commanded, with a real ball fed through
+    // the whole chain:
+    //     noise floor (pollen spread)   40 ticks/s
+    //     ONE POLLEN BALL              200 ticks/s   = 16.2% of target
+    //
+    // The code had assumed 3.1%. The real cost is FIVE TIMES that, which
+    // turns the dip from unusable into comfortable: the rule is
+    // spread < trip < ball, and the window is now 40..200 instead of a trip
+    // of 31 sitting below a noise floor of 40.
+    //
+    // 0.920 puts the trip at 99 ticks/s -- 2.5x clear of the noise and 2x
+    // clear of a ball. Both margins matter: too near the noise and it counts
+    // balls that never existed, too near the ball and a weak feed is missed.
+    //
+    // DIP_EXIT 0.990 was INSIDE the noise band -- the velocity drops below it
+    // unaided, so the latch re-armed erratically. 0.960 sits clear below the
+    // noise low point of 0.968.
+    //
+    // COUNT_FLOW_BY_DIP still stays FALSE: belt travel is proven and this is
+    // not, yet. But the dip is now a trustworthy SECOND witness, which is
+    // what the side-by-side counts in telemetry are for.
+    public static double DIP_ENTER = 0.960;   // below this fraction of target = a ball went
+    // 0.965, squeezed between DIP_ENTER 0.960 and the noise low point 0.968.
+    // A 3-thousandth band either side is not real hysteresis -- another
+    // reason the dip cannot be the primary counter.
+    public static double DIP_EXIT  = 0.965;   // above this, re-arm for the next
 
     private boolean pollenDipLow = true, nectarDipLow = true;
     private int pollenExits = 0, nectarExits = 0;

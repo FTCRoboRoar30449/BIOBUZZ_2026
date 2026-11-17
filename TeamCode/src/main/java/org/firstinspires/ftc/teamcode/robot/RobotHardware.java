@@ -51,10 +51,45 @@ public class RobotHardware {
 
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 
-    public static final double SHOOTER_KF = 10.78;
+    // Measured 14 Nov with the flywheels fitted. Free run gave 2240 ticks/s
+    // at 11.55 V, so F = 32767/2240 = 14.63 AT THAT VOLTAGE.
+    //
+    // F is voltage-dependent, and a match spans a wide range of it:
+    //     11.55 V -> 2240 ticks/s -> F 14.63
+    //     12.00 V -> 2327         -> F 14.08
+    //     12.40 V -> 2405         -> F 13.63
+    //     13.00 V -> 2521         -> F 13.00
+    //
+    // Set for MID-MATCH, about 12.0 V. Taking the figure from a flat pack
+    // over-drives a fresh one; taking it from a fresh pack leaves the motor
+    // short later, when it matters. P absorbs what is left either way.
+    //
+    // Was 10.78, from 3040 ticks/s at 13.0 V on a BARE ROTOR. The flywheels
+    // cost about 17% of free speed, so that figure was never going to hold.
+    //
+    // 11.55 V is the LOADED figure -- the pack rested at 12.25 V, so that is
+    // 0.70 V of sag with both flywheels at full power. Holding 2650 rpm draws
+    // far less than that, so the real operating voltage is around 11.95 and
+    // 14.08 lands within half a percent of it. Loaded voltage is the right
+    // basis for F: it is what the motor actually sees while it runs.
+    //
+    // Still worth re-measuring on a pack rested above 12.4 V, which is what
+    // the readiness check asks for -- 12.25 is just under.
+    public static final double SHOOTER_KF = 14.08;
 
-    public static final double SHOOTER_KP = 1.13;
-    public static final double SHOOTER_KI = 0.113;
+    // P corrects what F gets wrong, so it is sized from F: 0.1 x F is the
+    // usual starting point, which would be 1.41. 1.53 is what the page could
+    // actually reach (its fine step was 0.1) and it measured well against
+    // 1237 commanded:
+    //     pollen  1220..1260   spread 40 ticks/s  (3.2%)
+    //     nectar  1240..1260   spread 20 ticks/s  (1.6%)
+    // Both hold the target. Chasing 1.41 would be fitting noise.
+    //
+    // Pollen is twice as noisy as nectar on identical gains, so it is not the
+    // tuning: flywheel balance, bearing drag, or that motor's encoder. Not a
+    // blocker, but it is the difference that decides the dip question below.
+    public static final double SHOOTER_KP = 1.53;
+    public static final double SHOOTER_KI = 0.15;
     public static final double SHOOTER_KD = 0.0;
 
     public static final double SHOOTER_MAX_TICKS_PER_SEC = 3040.0;

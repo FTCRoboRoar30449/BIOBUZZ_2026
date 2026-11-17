@@ -20,10 +20,35 @@ public class VisionController {
     private VisionPortal visionPortal;
     private BallDetector ballDetector;
 
-    private static final double DISTANCE_BALL_MM = 20.0;
+    // Presence gate. A ball is "there" when either sensor reads closer than
+    // this. UNMEASURED -- 20 mm is the shipped guess, and it is the number
+    // RobotSetup step 13 exists to check: read the distance with a ball held
+    // against the sensor, then with the throat empty, and put this between
+    // them. Too large and an empty throat reads as full, which stalls the
+    // conveyor with nothing in it; too small and balls pass uncounted.
+    public static double DISTANCE_BALL_MM = 20.0;
 
     public static int REQUIRED_STABLE_FRAMES = 4;
     public static int LOST_FRAMES_TO_CLEAR = 10;
+
+    // Colour gates, hue in DEGREES 0-360 (not OpenCV's 0-179 -- these come
+    // from android.graphics.Color.RGBToHSV, which uses the full circle; the
+    // BallDetector camera gates are the halved kind, do not copy between).
+    //
+    // ALL UNMEASURED. These are the shipped guesses and every one of them is
+    // what step 13 is for. The hue is taken AFTER normalising rgb by its own
+    // max, so it is insensitive to how bright the throat is -- but saturation
+    // is not, and S is the gate most likely to be wrong under field light.
+    //
+    // Red nectar sits at 15-35, which is ORANGE on the colour circle. That is
+    // deliberate: a red ball under a white LED rarely reads below 15, and a
+    // gate that starts at 0 would also catch the dark plastic of the throat.
+    public static float POLLEN_H_LO = 80,  POLLEN_H_HI = 110;
+    public static float NECTAR_R_H_LO = 15,  NECTAR_R_H_HI = 35;
+    public static float NECTAR_B_H_LO = 215, NECTAR_B_H_HI = 240;
+    public static float POLLEN_S_MIN = 0.50f, POLLEN_V_MIN = 0.50f;
+    public static float NECTAR_R_S_MIN = 0.45f, NECTAR_R_V_MIN = 0.50f;
+    public static float NECTAR_B_S_MIN = 0.60f, NECTAR_B_V_MIN = 0.50f;
 
     private ShooterAdapter.Target raisedTarget = null;
     private ShooterAdapter.Target candidate = null;
@@ -249,6 +274,17 @@ public class VisionController {
 
     // ---- colour sensors ---------------------------------------------------
 
+    // This logic is ORIGINAL and is VALIDATED. On 14 Nov it was run unchanged
+    // on a spare Control Hub and a spare sensor and detected pollen and
+    // nectar correctly, with the distance reading swinging as a ball passed.
+    //
+    // A brightness-based presence path was added here earlier that day, when
+    // every sensor on the competition robot reported a fixed distance. That
+    // turned out to be a WIRING fault on the robot, not a sensor, driver or
+    // SDK problem -- so the workaround addressed something that did not
+    // exist, and it is removed rather than left switched off. Do not
+    // reintroduce it: if presence stops working, the reading has stopped
+    // varying, and no threshold placed on a constant can help.
     public boolean ballCheck(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
         return sensorL.getDistance(DistanceUnit.MM) < DISTANCE_BALL_MM
                 || sensorR.getDistance(DistanceUnit.MM) < DISTANCE_BALL_MM;
@@ -275,9 +311,28 @@ public class VisionController {
         float[] hsv = new float[3];
         Color.RGBToHSV(r * 255 / max, g * 255 / max, b * 255 / max, hsv);
         float h = hsv[0], s = hsv[1], v = hsv[2];
-        if (h >= 80 && h <= 110 && s >= 0.50 && v >= 0.50) return 1;   // yellow pollen
-        if (h >= 15 && h <= 35 && s >= 0.45 && v >= 0.50) return 2;    // red nectar
-        if (h >= 215 && h <= 240 && s >= 0.60 && v >= 0.50) return 3;  // blue nectar
+        return classify(h, s, v);
+    }
+
+    // Shared so RobotSetup step 13 can show the SAME verdict the robot will
+    // reach, instead of raw numbers the driver has to gate in their head.
+    // 0 none, 1 pollen, 2 red nectar, 3 blue nectar.
+    public static int classify(float h, float s, float v) {
+        if (h >= POLLEN_H_LO && h <= POLLEN_H_HI
+                && s >= POLLEN_S_MIN && v >= POLLEN_V_MIN) return 1;
+        if (h >= NECTAR_R_H_LO && h <= NECTAR_R_H_HI
+                && s >= NECTAR_R_S_MIN && v >= NECTAR_R_V_MIN) return 2;
+        if (h >= NECTAR_B_H_LO && h <= NECTAR_B_H_HI
+                && s >= NECTAR_B_S_MIN && v >= NECTAR_B_V_MIN) return 3;
         return 0;
+    }
+
+    public static String colorName(int c) {
+        switch (c) {
+            case 1:  return "POLLEN";
+            case 2:  return "NECTAR_RED";
+            case 3:  return "NECTAR_BLUE";
+            default: return "none";
+        }
     }
 }

@@ -61,9 +61,70 @@ public class BallDetector implements VisionProcessor {
     public static Scalar BLUE_LO = new Scalar(96, 75, 80);
     public static Scalar BLUE_HI = new Scalar(118, 255, 255);
 
-    public static double MIN_AREA_PX = 300;
-    public static double MAX_AREA_PX = 90000;
+    // Ball diameters, MEASURED 14 Nov. The two types are NOT the same size,
+    // and the difference is large: area scales with the square, so at equal
+    // range a nectar blob is 1.65x a pollen one.
+    public static double POLLEN_DIAM_IN = 2.8;
+    public static double NECTAR_DIAM_IN = 3.6;
+
+    // Cheap pre-filter only. Run the numbers for this camera (768 px focal,
+    // 12.13 in high, pitched 40 deg down) and the ground is visible from 7.8
+    // to 29.1 in in front of the lens -- a narrow band, and within it a real
+    // ball covers:
+    //
+    //     pollen   3,786 .. 20,697 px2
+    //     nectar   6,314 .. 35,937 px2
+    //
+    // The old gates were 300 and 90000: twelve times too low and two and a
+    // half times too high. They admitted anything and rejected nothing, so a
+    // yellow scuff on the tile passed every test and became a Detection that
+    // BallSeek would drive at. These are speckle/merge bounds now; the real
+    // work is the size check below.
+    public static double MIN_AREA_PX = 1200;
+    public static double MAX_AREA_PX = 60000;
     public static double MIN_CIRCULARITY = 0.55;
+
+    // Size consistency. Range comes from the ground-plane projection, which
+    // never looks at the blob's size, so predicting the area from that range
+    // and comparing is a genuinely INDEPENDENT test -- not circular. A floor
+    // mark projects to some range perfectly happily and then turns out to be
+    // the wrong size for a ball at that range, which is how it gets caught.
+    //
+    // Tolerances are deliberately loose. Balls get clipped at frame edges and
+    // the morphology erodes blobs, so under-reading is normal; over-reading
+    // means two balls have merged. This is here to reject things that are not
+    // balls, not to grade the ones that are.
+    // TURN THIS OFF TO TEST BY HAND. The check works by predicting the area
+    // from the range, and the range comes from assuming the ball TOUCHES THE
+    // FLOOR. Hold a ball up in front of the camera and that assumption is
+    // false: the projection puts it much further away than it is, the
+    // predicted area comes out far too small, and the detection is thrown
+    // away. The detector then reports nothing for a ball plainly in view,
+    // which looks like a broken detector rather than a violated assumption.
+    // Step 14 has A bound to this for exactly that reason.
+    public static boolean SIZE_CHECK = true;
+    public static double SIZE_TOL_LO = 0.35;
+    public static double SIZE_TOL_HI = 2.50;
+
+    public static double diameterIn(BallType t) {
+        return t == BallType.POLLEN ? POLLEN_DIAM_IN : NECTAR_DIAM_IN;
+    }
+
+    // What a ball of this type SHOULD cover at this range. Exposed so step 14
+    // can show predicted against measured: if a real ball sits consistently
+    // outside the tolerance, the tolerance is wrong, and that is only visible
+    // if the number is on the screen.
+    public double expectedAreaPx(BallType t, double rangeIn, double bearingDeg) {
+        double diam = diameterIn(t);
+        double g0 = rangeIn * Math.cos(Math.toRadians(bearingDeg));
+        double g1 = rangeIn * Math.sin(Math.toRadians(bearingDeg));
+        double dx = g0 + CAM_BEHIND_IN, dy = g1 + CAM_RIGHT_IN;
+        double dz = CAM_HEIGHT_IN - diam / 2.0;
+        double slant = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (slant < 1e-6) return 0;
+        double d = fx * diam / slant;
+        return Math.PI / 4.0 * d * d;
+    }
 
     // ---- camera, from RobotHardware --------------------------------------
     public static double CAM_HEIGHT_IN = RobotHardware.C270_HEIGHT_IN;
@@ -236,6 +297,28 @@ public class BallDetector implements VisionProcessor {
 
             double[] g = groundPoint(u, v);
             if (g == null) continue;                  // ray never meets the floor
+
+            // Predict the blob's size from the range the GEOMETRY gave us and
+            // compare with what was actually measured. Distance is to the
+            // ball's CENTRE, half a diameter off the floor, not to the
+            // contact point -- using the contact point would over-predict the
+            // area for the near balls, which are the ones that matter most.
+            double diam = diameterIn(type);
+            double dx = g[0] - (-CAM_BEHIND_IN);
+            double dy = g[1] - (-CAM_RIGHT_IN);
+            double dz = CAM_HEIGHT_IN - diam / 2.0;
+            double slant = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            // fx is set in init(), which the VisionPortal calls before any
+            // frame -- but if that ever changed, predArea would be 0, every
+            // ratio would be 0, and the check would silently reject EVERY
+            // detection. Fail open: a check that cannot run must not be the
+            // thing that empties the list.
+            if (SIZE_CHECK && fx > 0 && slant > 1e-6) {
+                double predDpx = fx * diam / slant;
+                double predArea = Math.PI / 4.0 * predDpx * predDpx;
+                double ratio = predArea > 0 ? area / predArea : 0;
+                if (ratio < SIZE_TOL_LO || ratio > SIZE_TOL_HI) continue;
+            }
 
             double range = Math.hypot(g[0], g[1]);
             double bearing = Math.toDegrees(Math.atan2(g[1], g[0]));

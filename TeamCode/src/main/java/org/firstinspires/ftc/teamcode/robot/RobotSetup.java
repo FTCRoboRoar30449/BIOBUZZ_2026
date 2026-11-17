@@ -6,6 +6,7 @@ import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoImplEx;
@@ -212,6 +213,82 @@ public class RobotSetup extends LinearOpMode {
     private int feedStartPos = 0, feedTargetTicks = 0;
     private boolean dipSpinning = false;
     private double dipRpm = 2650;
+    private boolean dipNectar = false;
+
+    // Measuring what a ball ACTUALLY costs the flywheel.
+    //
+    // The verdict on this page compares the noise floor against
+    // target * 0.031 -- an estimate nobody has ever checked, and the only
+    // guess left in the whole dip calculation. With everything mounted a
+    // ball cannot be fed by hand, so the belt has to do it: run one feed
+    // distance while the wheel is up and watch how far the velocity falls.
+    // The chain runs until you stop it; the capture is just a window laid
+    // over it. Tying the two together meant the belt halted 2.5 s after Y --
+    // often with a ball halfway through, which jams it.
+    // Step 13 capture. The display jitters, so the page remembers instead of
+    // asking the driver to catch a number by eye. Per sensor, so switching
+    // rows does not lose what the previous sensor measured.
+    // Brightest and dimmest r+g+b seen, per sensor. Brightness replaced
+    // distance here on 14 Nov when proximity was found dead on all six.
+    private final int[]   colLvlBall  = new int[6];   // brightest (ball on)
+    private final int[]   colLvlEmpty = new int[6];   // dimmest (throat empty)
+    private final float[] colHue = new float[6];      // hue at the brightest point
+    private final float[] colSat = new float[6];
+    private final float[] colVal = new float[6];
+    private final float[] colHueEmpty = new float[6]; // hue with nothing there
+    // Distance swing per sensor. THE wiring test: a correctly wired sensor
+    // swings tens of mm as a ball passes, a miswired one never moves.
+    private final double[] colDistMin = new double[6];
+    private final double[] colDistMax = new double[6];
+    private boolean colArmed = false;
+
+    // The camera is started LAZILY, on first arrival at step 14, not at init.
+    //
+    // Not at init because opening a VisionPortal costs seconds and can throw
+    // outright when the webcam is unplugged -- and this OpMode is the only
+    // tool for 28 other steps, none of which need a camera. An init that dies
+    // on a missing webcam would take the turret, the hoods and the shooter
+    // down with it.
+    private boolean camTried = false;
+    private String camError = null;
+    { for (int i = 0; i < 6; i++) {
+          colLvlEmpty[i] = Integer.MAX_VALUE;
+          colDistMin[i] = Double.MAX_VALUE;
+          colDistMax[i] = -Double.MAX_VALUE;
+      } }
+
+    // Step 14 capture, per ball type, per HSV channel. A gate set from ONE
+    // sample is a gate set at the bench under one light at one angle. Rolling
+    // the ball through the view while this runs is what turns it into a range.
+    private final double[][] ballLo = new double[3][3];
+    private final double[][] ballHi = new double[3][3];
+    private final int[] ballSamples = new int[3];
+    private boolean ballArmed = false;
+    { for (int t = 0; t < 3; t++) for (int c = 0; c < 3; c++) {
+          ballLo[t][c] = Double.MAX_VALUE; ballHi[t][c] = -Double.MAX_VALUE; } }
+
+    private boolean dipChain = false;
+    private boolean dipCapture = false;
+    private long dipCaptureMs = 0;
+    private double dipBaseline = 0, dipMinSeen = 1e9;
+    private Double dipMeasured = null;
+
+    // How long the wheel takes to climb back after a ball.
+    //
+    // SHOOTER_RECOVER_MS decides when the next ball may be fed. Set too
+    // short, the second and later balls of a volley go into a wheel that has
+    // not recovered -- and every one of them flies short, consistently, in a
+    // way that reads as "inconsistent shooting" rather than a timing
+    // constant. It was chosen for a 38 tick dip; the real one is 5x that.
+    //
+    // Timed from the LOWEST point, not from the feed, because that is the
+    // moment the wheel actually starts climbing.
+    private long dipMinMs = 0;
+    private Long dipRecoverMs = null;
+    private boolean dipRecoverWatch = false;
+    public static double DIP_RECOVER_FRAC = 0.98;     // "back up" means within 2%
+    public static long DIP_RECOVER_TIMEOUT_MS = 5000;
+    public static long DIP_CAPTURE_MS = 2500;
 
     private int ballTypeIdx = 0;
     private int encStart = 0;
@@ -328,6 +405,8 @@ public class RobotSetup extends LinearOpMode {
                         v -> MechController.CONVEYOR_POWER = v),
             };
             case DIP: return new Knob[] {
+                new Knob("-", "test tunnel  0=pollen 1=nectar", "%.0f", 1, 1, 0, 1,
+                        () -> dipNectar ? 1 : 0, v -> dipNectar = v >= 0.5),
                 new Knob("-", "dip test rpm", "%.0f rpm", 250, 25, 0, 6500,
                         () -> dipRpm, v -> dipRpm = v),
                 new Knob("MechController", "DIP_ENTER", "%.4f", 0.005, 0.001, 0.80, 1.0,
@@ -500,6 +579,7 @@ public class RobotSetup extends LinearOpMode {
 
             if (l && !pL) { step = prev(step); sel = 0; note = ""; servoMark = null; resetEnc(); }
             if (r && !pR) { step = next(step); sel = 0; note = ""; servoMark = null; resetEnc(); }
+            if (step == Step.BALLS) ensureCamera();
 
             int n = Math.max(1, rows(step));
             if (u && !pU) sel = (sel + n - 1) % n;
@@ -668,10 +748,13 @@ public class RobotSetup extends LinearOpMode {
             case SHOOTER:
                 switch (sel % 5) {
                     case 0: targetRpm = clampR(targetRpm + dir * (fine ? 25 : 250), 0, 6500); break;
-                    case 1: kP = clampR(kP + dir * (fine ? 0.1 : 1.0), 0, 200); applyPidf(); break;
-                    case 2: kI = clampR(kI + dir * (fine ? 0.01 : 0.1), 0, 50); applyPidf(); break;
-                    case 3: kD = clampR(kD + dir * (fine ? 0.1 : 1.0), 0, 200); applyPidf(); break;
-                    case 4: kF = clampR(kF + dir * (fine ? 0.1 : 1.0), 0, 100); applyPidf(); break;
+                    // Halved on 14 Nov: the old fine step of 0.1 on P could
+                    // not reach 1.41 from 1.13, and a gain you cannot land on
+                    // is a gain you cannot tune.
+                    case 1: kP = clampR(kP + dir * (fine ? 0.05 : 0.5), 0, 200); applyPidf(); break;
+                    case 2: kI = clampR(kI + dir * (fine ? 0.005 : 0.05), 0, 50); applyPidf(); break;
+                    case 3: kD = clampR(kD + dir * (fine ? 0.05 : 0.5), 0, 200); applyPidf(); break;
+                    case 4: kF = clampR(kF + dir * (fine ? 0.05 : 0.5), 0, 100); applyPidf(); break;
                 }
                 resetSpread();
                 break;
@@ -709,6 +792,12 @@ public class RobotSetup extends LinearOpMode {
         switch (step) {
             case DIRECTION:
                 startDirection(+1);
+                break;
+            case BALLS:
+                BallDetector.SIZE_CHECK = !BallDetector.SIZE_CHECK;
+                note = BallDetector.SIZE_CHECK
+                        ? "size check ON -- ball must be ON THE FLOOR"
+                        : "size check OFF -- handheld balls will register";
                 break;
             case SERVO_LIMITS:
                 servoLo[servoIdx()] = servoPos[servoIdx()];
@@ -804,10 +893,11 @@ public class RobotSetup extends LinearOpMode {
                 break;
             case DIP:
                 dipSpinning = true;
-                robot.pollenShootingMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-                robot.pollenShootingMot.setVelocity(RobotHardware.rpmToTicksPerSec(dipRpm));
+                dipMotor().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+                dipMotor().setVelocity(RobotHardware.rpmToTicksPerSec(dipRpm));
                 resetSpread();
-                note = "pollen flywheel at " + (int) dipRpm + " rpm";
+                note = (dipNectar ? "nectar" : "pollen") + " flywheel at "
+                     + (int) dipRpm + " rpm";
                 break;
             case LIMELIGHT:
                 vision.forcePipeline(sel % 10);
@@ -822,6 +912,16 @@ public class RobotSetup extends LinearOpMode {
             case DIRECTION:
                 startDirection(-1);
                 break;
+            case BALLS: {
+                int ti = ballTypeIdx % 3;
+                for (int ch = 0; ch < 3; ch++) {
+                    ballLo[ti][ch] = Double.MAX_VALUE;
+                    ballHi[ti][ch] = -Double.MAX_VALUE;
+                }
+                ballSamples[ti] = 0;
+                note = "capture cleared for this colour";
+                break;
+            }
             case SERVO_LIMITS:
                 servoHi[servoIdx()] = servoPos[servoIdx()];
                 if (servoIdx() == 0) turretHiTicks = robot.intakeMot.getCurrentPosition();
@@ -914,6 +1014,12 @@ public class RobotSetup extends LinearOpMode {
             case DIP:
                 resetSpread(); note = "spread reset";
                 break;
+            case COLOR:
+                // Clears all six, because capture now fills all six. Clearing
+                // one would leave five stale rows in the summary.
+                for (int k = 0; k < 6; k++) resetColor(k);
+                note = "capture cleared, all six";
+                break;
             case BALLS:
                 // Re-measure every gate after flipping: red and blue trade
                 // places, so the old windows are not shifted, they point at
@@ -942,6 +1048,56 @@ public class RobotSetup extends LinearOpMode {
             }
             case PWM_CHECK:
                 runBreakawayTest();
+                break;
+            case COLOR:
+                colArmed = !colArmed;
+                note = colArmed
+                        ? "capturing -- hold a ball on, then take it away"
+                        : "capture paused";
+                break;
+            case BALLS:
+                // No detector means the portal never came up, so arming a
+                // capture would do nothing. Retry the camera instead.
+                if (vision.getBallDetector() == null) {
+                    camTried = false;
+                    ensureCamera();
+                    break;
+                }
+                ballArmed = !ballArmed;
+                note = ballArmed
+                        ? "capturing -- roll the ball across the view"
+                        : "capture paused";
+                break;
+            case DIP:
+                if (!dipSpinning) {
+                    note = "spin the wheel first with A, then Y to feed a ball";
+                    break;
+                }
+                // Baseline BEFORE the belt moves, so the dip is measured
+                // against where the wheel actually was, not the setpoint.
+                dipBaseline = dipMotor().getVelocity();
+                dipMinSeen = dipBaseline;
+                dipMeasured = null;
+                dipCapture = true;
+                dipCaptureMs = System.currentTimeMillis();
+                dipChain = true;
+                // CONTINUOUS, not a fixed tick count. runBelt() moves a set
+                // distance, which is right for indexing a ball already in the
+                // tunnel and useless for picking one up: the belt stops before
+                // the ball has gone anywhere. Here it just runs until the
+                // capture window closes.
+                //
+                // Full power, pinned rather than read from CONVEYOR_POWER --
+                // this is a measurement, and a tunable someone later drops to
+                // 0.6 would turn it into a stall that reads as "no dip".
+                robot.conveyorMot.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                robot.conveyorMot.setPower(1.0);
+                robot.intakeMot.setPower(1.0);
+                // Engage the bed for the tunnel under test, or the ball has
+                // nowhere to go when it arrives.
+                if (dipNectar) conveyorNectarBed(true); else conveyorPollenBed(true);
+                note = String.format(Locale.US,
+                        "intake + belt running, baseline %.0f ticks/s", dipBaseline);
                 break;
             case TURRET_SIGN:
             case ENCODER_SIGN:
@@ -1100,15 +1256,57 @@ public class RobotSetup extends LinearOpMode {
         }
         if (feedRunning && !robot.conveyorMot.isBusy()) {
             feedRunning = false;
-            note = String.format(Locale.US, "feed done: %d ticks in %d ms",
-                    robot.conveyorMot.getCurrentPosition() - feedStartPos,
-                    System.currentTimeMillis() - feedStartMs);
+            // A dip capture owns the note until it finishes -- otherwise the
+            // feed-done message overwrites the measurement being taken.
+            if (!dipCapture) {
+                note = String.format(Locale.US, "feed done: %d ticks in %d ms",
+                        robot.conveyorMot.getCurrentPosition() - feedStartPos,
+                        System.currentTimeMillis() - feedStartMs);
+            }
+        }
+        if (dipRecoverWatch) {
+            long now = System.currentTimeMillis();
+            double v = dipMotor().getVelocity();
+            if (v >= dipBaseline * DIP_RECOVER_FRAC) {
+                dipRecoverWatch = false;
+                dipRecoverMs = now - dipMinMs;
+                note = String.format(Locale.US,
+                        "dip %.0f ticks/s, recovered in %d ms. SHOOTER_RECOVER_MS is %d.",
+                        dipMeasured, dipRecoverMs, MechController.SHOOTER_RECOVER_MS);
+            } else if (now - dipMinMs > DIP_RECOVER_TIMEOUT_MS) {
+                dipRecoverWatch = false;
+                note = String.format(Locale.US,
+                        "did NOT recover to %.0f%% within %d ms -- still at %.0f of %.0f",
+                        DIP_RECOVER_FRAC * 100, DIP_RECOVER_TIMEOUT_MS, v, dipBaseline);
+            }
+        }
+        if (dipCapture) {
+            double v = dipMotor().getVelocity();
+            if (v < dipMinSeen) { dipMinSeen = v; dipMinMs = System.currentTimeMillis(); }
+            if (System.currentTimeMillis() - dipCaptureMs > DIP_CAPTURE_MS) {
+                dipCapture = false;
+                // Chain keeps running -- B stops it. Cutting the belt here
+                // strands whatever ball is mid-travel.
+                dipMeasured = dipBaseline - dipMinSeen;
+                dipRecoverMs = null;
+                dipRecoverWatch = true;
+                double trip = RobotHardware.rpmToTicksPerSec(dipRpm)
+                        * (1.0 - MechController.DIP_ENTER);
+                note = String.format(Locale.US,
+                        "BALL COST %.0f ticks/s (%.1f%% of target). Trip is %.0f. %s",
+                        dipMeasured,
+                        100.0 * dipMeasured / Math.max(1, RobotHardware.rpmToTicksPerSec(dipRpm)),
+                        trip,
+                        dipMeasured > trip ? "Bigger than the trip -- detectable."
+                                           : "SMALLER than the trip -- a real ball would be missed.");
+            }
         }
         if (dipSpinning || openLoop || step == Step.SHOOTER) {
             double v = openLoop
                     ? Math.max(robot.pollenShootingMot.getVelocity(),
                                robot.nectarShootingMot.getVelocity())
-                    : robot.pollenShootingMot.getVelocity();
+                    : (step == Step.DIP ? dipMotor().getVelocity()
+                                        : robot.pollenShootingMot.getVelocity());
             if (v > observedMaxTps) observedMaxTps = v;
             if (System.currentTimeMillis() - spreadResetMs > 2500) resetSpread();
             if (v < vMin) vMin = v;
@@ -1179,9 +1377,10 @@ public class RobotSetup extends LinearOpMode {
             case INDEX:
             case FEED:           return "A = run selected row   B = stop  (MOVES BELT)";
             case SHOOTER:        return "A=pollen  B=nectar  Y=FULL POWER  X=stop";
-            case DIP:            return "A = spin   B = stop   X = reset spread";
+            case DIP:            return "A=spin  B=STOP ALL  X=reset  Y=run chain + measure";
+            case COLOR:          return "Y = arm (all six)   X = reset all";
             case LIMELIGHT:      return "dpad U/D pick pipeline   A = FORCE it";
-            case BALLS:          return "X = flip BGR/RGB   bumpers coarse";
+            case BALLS:          return "Y=capture  B=clear  X=BGR/RGB  A=size chk";
             case DUMP:           return "paste into source -- NOTHING IS SAVED";
             default:             return "bumpers coarse   triggers fine";
         }
@@ -1803,19 +2002,55 @@ public class RobotSetup extends LinearOpMode {
                 telemetry.addLine("times out instead of completing.");
                 break;
             case DIP: {
-                double tps = robot.pollenShootingMot.getVelocity();
+                double tps = dipMotor().getVelocity();
                 double target = RobotHardware.rpmToTicksPerSec(dipRpm);
                 double trip = target * (1.0 - MechController.DIP_ENTER);
-                double ball = target * 0.031;
+                // Use the MEASURED ball cost once Y has taken one. Until
+                // then fall back to the 3.1% estimate, and say which it is --
+                // a verdict computed from a guess should not look like a
+                // verdict computed from a measurement.
+                double ball = (dipMeasured != null) ? dipMeasured : target * 0.031;
                 double spread = (vMax >= vMin) ? (vMax - vMin) : 0;
-                telemetry.addData("pollen", "%.0f ticks/s  of  %.0f", tps, target);
+                telemetry.addData(dipNectar ? "nectar" : "pollen",
+                        "%.0f ticks/s  of  %.0f", tps, target);
                 telemetry.addData("spread (2.5s)", "%.0f   [%.0f .. %.0f]", spread, vMin, vMax);
-                telemetry.addData("trip / ball", "%.0f / %.0f ticks/s", trip, ball);
+                telemetry.addData("trip / ball", "%.0f / %.0f ticks/s   (%s)",
+                        trip, ball, dipMeasured != null ? "ball MEASURED" : "ball estimated 3.1%");
                 telemetry.addLine(spread >= trip
                         ? "!! spread >= trip: NOISE WILL COUNT AS BALLS"
                         : (trip >= ball
                             ? "!! trip >= ball: a real ball will be MISSED"
                             : "usable: spread < trip < ball"));
+                telemetry.addLine("");
+                // The 'ball' figure above is an ESTIMATE (3.1% of target).
+                // Y feeds one through and measures what it really costs.
+                if (dipCapture) {
+                    telemetry.addData("MEASURING", "baseline %.0f   low so far %.0f",
+                            dipBaseline, dipMinSeen);
+                } else if (dipRecoverWatch) {
+                    telemetry.addData("RECOVERING", "%.0f of %.0f, need %.0f",
+                            dipMotor().getVelocity(), dipBaseline,
+                            dipBaseline * DIP_RECOVER_FRAC);
+                } else if (dipMeasured != null) {
+                    telemetry.addData("ball measured", "%.0f ticks/s  (%.1f%% of target)",
+                            dipMeasured, 100.0 * dipMeasured / Math.max(1, target));
+                    if (dipRecoverMs != null) {
+                        telemetry.addData("recovered in", "%d ms   vs SHOOTER_RECOVER_MS %d",
+                                dipRecoverMs, MechController.SHOOTER_RECOVER_MS);
+                        telemetry.addLine(dipRecoverMs > MechController.SHOOTER_RECOVER_MS
+                                ? "  !! RECOVER_MS TOO SHORT -- later balls fly short"
+                                : "  RECOVER_MS has enough margin");
+                    }
+                } else {
+                    telemetry.addLine("Y runs intake + belt and measures the dip.");
+                    telemetry.addLine("Spin with A first. B stops the chain.");
+                }
+                telemetry.addData("chain", dipChain
+                        ? "intake + belt RUNNING -- B to stop"
+                        : "stopped");
+                if (dipChain && !dipCapture) {
+                    telemetry.addLine("Y again for another reading, belt keeps running.");
+                }
                 break;
             }
             case TURRET:
@@ -1909,9 +2144,12 @@ public class RobotSetup extends LinearOpMode {
                                  robot.sensorNectarL, robot.sensorNectarR };
         String[] n = { "intakeL", "intakeR", "pollenL", "pollenR", "nectarL", "nectarR" };
         int i = sel % s.length;
-        telemetry.addLine("Hold a ball against the selected sensor.");
+
+        telemetry.addLine("Y = arm once, then walk a ball to all THREE");
+        telemetry.addLine("locations in turn. Captures all six. X = reset.");
         telemetry.addLine("");
-        telemetry.addLine("> " + n[i]);
+        telemetry.addLine("> " + n[i] + (colArmed ? "   [CAPTURING]" : ""));
+
         double dist = s[i].getDistance(DistanceUnit.MM);
         int r = s[i].red(), g = s[i].green(), bl = s[i].blue();
         int max = Math.max(r, Math.max(g, bl));
@@ -1919,17 +2157,163 @@ public class RobotSetup extends LinearOpMode {
         if (max > 0) {
             android.graphics.Color.RGBToHSV(r * 255 / max, g * 255 / max, bl * 255 / max, hsv);
         }
-        telemetry.addData("distance", "%.1f mm  (ball if < 20)", dist);
-        telemetry.addData("rgb", "%d / %d / %d", r, g, bl);
-        telemetry.addData("hsv", "%.1f / %.2f / %.2f", hsv[0], hsv[1], hsv[2]);
+
+        // Capture BRIGHTNESS, not distance. Proximity returns a fixed 6.4 mm
+        // on all six of these, so there is nothing in the distance reading to
+        // capture -- the ball shows up as MORE LIGHT COMING BACK instead, and
+        // that is what sets the threshold now.
+        int level = r + g + bl;
+        // While armed, capture ALL SIX, not just the selected row.
+        //
+        // The sensors sit in three PAIRS at three places on the robot, so a
+        // ball can only ever be at one location at a time. That is precisely
+        // why capturing all six works: while the ball is at the intake, the
+        // intake pair records its BALL level and the other four record their
+        // EMPTY level. Walk the ball to the next location and those swap
+        // roles. One armed pass over the three locations leaves every sensor
+        // with both halves of its measurement, and no row switching.
+        //
+        // Only while armed: this is six I2C round trips a loop, worth paying
+        // during a capture and not worth paying to idle on the page.
+        if (colArmed) {
+            for (int k = 0; k < s.length; k++) captureColor(s[k], k);
+        }
+
+        // Mirror readColor EXACTLY: the distance gate first, then the hue.
+        // Anything else and this page reports a verdict the robot will not
+        // reach, which is worse than reporting nothing.
+        boolean present = dist < VisionController.DISTANCE_BALL_MM;
+        int verdict = present ? VisionController.classify(hsv[0], hsv[1], hsv[2]) : 0;
+
+        // THE reading that matters: this is what readColor gates on. It must
+        // CHANGE as a ball approaches. A value that never moves is a wiring
+        // fault -- that is what it was on 14 Nov, on all six at once.
+        telemetry.addData("distance", "%.1f mm   %s   (gate %.0f)",
+                dist, present ? "BALL" : "empty", VisionController.DISTANCE_BALL_MM);
+        telemetry.addData("level", "%d", level);
+        // The hue is computed whether or not the gate passed, so you can see
+        // that a sensor is reading sensible colour even while distance says
+        // there is nothing there. The VERDICT, though, respects the gate.
+        telemetry.addData("hsv", "%.0f / %.2f / %.2f  -> %s",
+                hsv[0], hsv[1], hsv[2], VisionController.colorName(verdict));
+        // ALPHA is the clear channel -- total light, no colour. It is the
+        // single best "is this device alive" reading: it swings hard when
+        // anything comes near, it does not depend on the ball being a
+        // particular colour, and it comes off the same I2C read as rgb.
+        //
+        // Read it against distance. If alpha moves and distance does not, the
+        // device is talking and it is the PROXIMITY channel specifically that
+        // is stuck -- which is a different fault from a dead sensor, and the
+        // colour path still works. If alpha is frozen too, nothing is being
+        // read at all and distance was never going to mean anything.
+        telemetry.addData("rgb + alpha", "%d / %d / %d   a %d", r, g, bl, s[i].alpha());
         telemetry.addLine("");
-        telemetry.addLine("expect H: yellow 80-110  red 15-35  blue 215-240");
-        telemetry.addLine("Covering one sensor proves the NAME maps to it.");
+
+        if (colLvlBall[i] > 0) {
+            double swing = (colDistMax[i] <= -Double.MAX_VALUE ? 0 : colDistMax[i])
+                         - (colDistMin[i] >= Double.MAX_VALUE ? 0 : colDistMin[i]);
+            telemetry.addData("dist seen", "%.1f .. %.1f   swing %.1f mm",
+                    colDistMin[i] >= Double.MAX_VALUE ? 0 : colDistMin[i],
+                    colDistMax[i] <= -Double.MAX_VALUE ? 0 : colDistMax[i], swing);
+            telemetry.addData("ball", "level %d   H %.0f  S %.2f  V %.2f",
+                    colLvlBall[i], colHue[i], colSat[i], colVal[i]);
+            telemetry.addData("empty", "level %d", colLvlEmpty[i]);
+            // Swing is the only pass/fail here. The level numbers say how
+            // CLOSE the sensor sits to the ball path, which is worth knowing
+            // once it works, but a sensor that is not reading at all will
+            // happily report a healthy-looking level from ambient light.
+            if (swing < 5) {
+                telemetry.addLine("distance never moved -- check this sensor's");
+                telemetry.addLine("cable and its config port before anything else.");
+            }
+        } else {
+            telemetry.addLine("nothing captured yet -- press Y");
+        }
+
+        // All six at a glance, so one pass tells you which are wired.
+        telemetry.addLine("");
+        for (int k = 0; k < s.length; k++) {
+            if (colLvlBall[k] <= 0) continue;
+            double swing = (colDistMax[k] <= -Double.MAX_VALUE ? 0 : colDistMax[k])
+                         - (colDistMin[k] >= Double.MAX_VALUE ? 0 : colDistMin[k]);
+            // Swing is the verdict. Level is only useful for judging how
+            // close the sensor sits to the ball path once it IS working.
+            telemetry.addLine(String.format(Locale.US, "%-8s swing %5.1fmm  lvl %5d%s",
+                    n[k], swing, colLvlBall[k],
+                    swing < 5 ? "  NOT WIRED?" : ""));
+        }
+    }
+
+    // Build the VisionPortal if it is not up yet. Catches Exception rather
+    // than letting it propagate: a webcam fault must cost you step 14, not
+    // the whole OpMode. camTried stops it retrying every loop -- Y retries it
+    // deliberately, which is what you want after plugging the camera back in.
+    private void ensureCamera() {
+        if (vision.getBallDetector() != null || camTried) return;
+        camTried = true;
+        try {
+            vision.initAprilTag();
+            camError = null;
+            note = "camera starting -- a few seconds before frames arrive";
+        } catch (Exception e) {
+            camError = e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage());
+            note = "camera FAILED -- Y to retry";
+        }
+    }
+
+    // One sensor's contribution to the capture. Recomputes hue locally rather
+    // than reusing the selected row's, which would record the wrong sensor's
+    // colour against five of the six slots.
+    private void captureColor(RevColorSensorV3 sensor, int k) {
+        double d = sensor.getDistance(DistanceUnit.MM);
+        if (!Double.isNaN(d) && !Double.isInfinite(d)) {
+            if (d < colDistMin[k]) colDistMin[k] = d;
+            if (d > colDistMax[k]) colDistMax[k] = d;
+        }
+        int r = sensor.red(), g = sensor.green(), b = sensor.blue();
+        int level = r + g + b;
+        int max = Math.max(r, Math.max(g, b));
+        float[] hsv = new float[3];
+        if (max > 0) {
+            android.graphics.Color.RGBToHSV(r * 255 / max, g * 255 / max, b * 255 / max, hsv);
+        }
+        if (level > colLvlBall[k]) {
+            colLvlBall[k] = level;
+            colHue[k] = hsv[0]; colSat[k] = hsv[1]; colVal[k] = hsv[2];
+        }
+        if (level < colLvlEmpty[k]) {
+            colLvlEmpty[k] = level;
+            // Hue of the EMPTY throat. If this lands in the same window as
+            // the ball's, hue alone cannot separate them and no gate tuning
+            // will fix it -- the brightness floor is the only thing that can.
+            colHueEmpty[k] = hsv[0];
+        }
+    }
+
+    private void resetColor(int i) {
+        colLvlBall[i] = 0;
+        colLvlEmpty[i] = Integer.MAX_VALUE;
+        colHue[i] = 0; colSat[i] = 0; colVal[i] = 0;
+        colHueEmpty[i] = 0;
+        colDistMin[i] = Double.MAX_VALUE;
+        colDistMax[i] = -Double.MAX_VALUE;
     }
 
     private void drawBalls() {
         BallDetector bd = vision.getBallDetector();
-        if (bd == null) { telemetry.addLine("camera not started"); return; }
+        if (bd == null) {
+            if (camError != null) {
+                telemetry.addLine("CAMERA FAILED TO START");
+                telemetry.addLine(camError);
+                telemetry.addLine("");
+                telemetry.addLine("Check Webcam 1 is on USB 2 and named");
+                telemetry.addLine("\"Webcam 1\" in the config.  Y = retry");
+            } else {
+                telemetry.addLine("starting camera...  Y = retry");
+            }
+            return;
+        }
 
         BallDetector.BallType[] types = BallDetector.BallType.values();
         BallDetector.BallType t = types[ballTypeIdx % types.length];
@@ -1948,6 +2332,18 @@ public class RobotSetup extends LinearOpMode {
                 BallDetector.FRAME_IS_BGR ? "BGR" : "RGB",
                 (raw[0] + raw[1] + raw[2] > 30 && raw[2] > raw[0] + 40)
                         ? "   !! looks SWAPPED, X to flip" : "");
+        // Capture the RANGE, not a sample. Guarded on V: a centre pixel of
+        // near-black is the ball having left the view, and its hue is noise
+        // that would blow the window wide open if it were folded in.
+        int ti = ballTypeIdx % 3;
+        if (ballArmed && c[2] > 40) {
+            for (int ch = 0; ch < 3; ch++) {
+                if (c[ch] < ballLo[ti][ch]) ballLo[ti][ch] = c[ch];
+                if (c[ch] > ballHi[ti][ch]) ballHi[ti][ch] = c[ch];
+            }
+            ballSamples[ti]++;
+        }
+
         telemetry.addLine("");
         String[] lbl = { "colour", "H low", "H high", "S min", "V min" };
         double[] val = { ballTypeIdx, g[0], g[1], g[2], g[3] };
@@ -1956,17 +2352,56 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addLine((i == sel % 5 ? "> " : "  ") + String.format("%-7s %s", lbl[i], v));
         }
         telemetry.addLine("");
+
+        if (ballSamples[ti] > 0) {
+            telemetry.addData("measured", "H %.0f-%.0f  S %.0f-%.0f  V %.0f-%.0f  (%d)",
+                    ballLo[ti][0], ballHi[ti][0], ballLo[ti][1], ballHi[ti][1],
+                    ballLo[ti][2], ballHi[ti][2], ballSamples[ti]);
+            // Hue padded by 8 either side; S and V floored well under the
+            // minimum seen, because the bench is better lit than a gym and
+            // under-saturating is how a visible ball gets dropped.
+            telemetry.addData("suggest", "H %.0f-%.0f  S>%.0f  V>%.0f",
+                    Math.max(0, ballLo[ti][0] - 8), Math.min(179, ballHi[ti][0] + 8),
+                    Math.max(0, ballLo[ti][1] * 0.6), Math.max(0, ballLo[ti][2] * 0.6));
+            if (ballHi[ti][0] - ballLo[ti][0] > 40) {
+                // RED legitimately spans the 0/179 seam, so a wide spread
+                // there is the wrap, not contamination, and the single
+                // suggested window above is wrong for it -- red needs two.
+                telemetry.addLine(t == BallDetector.BallType.NECTAR_RED
+                        ? "wraps 0/179 -- set RED1 and RED2 by hand"
+                        : "hue spread >40 -- background is in the patch");
+            }
+        } else if (ballArmed) {
+            telemetry.addLine("armed -- hold the ball over the centre");
+        } else {
+            telemetry.addLine("Y = capture range   B = clear this colour");
+        }
+        telemetry.addLine("");
         List<BallDetector.Detection> ds = bd.getDetections();
         int p = 0, r = 0, b = 0;
         for (BallDetector.Detection d : ds) {
             if (d.type == BallDetector.BallType.POLLEN) p++;
             else if (d.type == BallDetector.BallType.NECTAR_RED) r++; else b++;
         }
-        telemetry.addData("seen", "pollen %d   red %d   blue %d", p, r, b);
+        telemetry.addData("seen", "pollen %d   red %d   blue %d%s", p, r, b,
+                BallDetector.SIZE_CHECK ? "" : "   [size chk OFF]");
+        if (ds.isEmpty() && BallDetector.SIZE_CHECK) {
+            telemetry.addLine("nothing seen -- if the ball is in your HAND");
+            telemetry.addLine("press A, the size check assumes it is on the floor");
+        }
         if (!ds.isEmpty()) {
             BallDetector.Detection nd = ds.get(0);
             telemetry.addData("nearest", "%s  %.1f in  %+.1f deg  %.0f px",
                     nd.type, nd.rangeIn, nd.bearingDeg, nd.areaPx);
+            // Predicted from the range, measured from the blob. These two are
+            // arrived at independently, so a ratio near 1.0 means the geometry
+            // and the camera agree -- and a ratio that is consistently off for
+            // a REAL ball means a camera constant is wrong, most likely the
+            // mounting height or the pitch.
+            double exp = bd.expectedAreaPx(nd.type, nd.rangeIn, nd.bearingDeg);
+            telemetry.addData("size", "expect %.0f px   ratio %.2f  (keep %.2f-%.2f)",
+                    exp, exp > 0 ? nd.areaPx / exp : 0,
+                    BallDetector.SIZE_TOL_LO, BallDetector.SIZE_TOL_HI);
         } else {
             telemetry.addLine("nearest  none");
         }
@@ -2099,10 +2534,33 @@ public class RobotSetup extends LinearOpMode {
         feedRunning = false;
     }
 
+    // The flywheel under test on the DIP step.
+    private DcMotorEx dipMotor() {
+        return dipNectar ? robot.nectarShootingMot : robot.pollenShootingMot;
+    }
+
+    private void conveyorPollenBed(boolean engaged) {
+        robot.conveyorPollen.setPosition(MechController.bedPollenPos(engaged));
+    }
+
+    private void conveyorNectarBed(boolean engaged) {
+        robot.conveyorNectar.setPosition(MechController.bedNectarPos(engaged));
+    }
+
     private void stopDip() {
-        robot.pollenShootingMot.setVelocity(0);
-        robot.pollenShootingMot.setPower(0);
+        dipMotor().setVelocity(0);
+        dipMotor().setPower(0);
         dipSpinning = false;
+        // B stops the WHOLE chain, not just the wheel -- and since the chain
+        // now outlives the capture window, this is the ONLY thing that stops
+        // it. Leaving the step calls stopEverything(), which calls this.
+        dipCapture = false;
+        if (dipChain) {
+            dipChain = false;
+            robot.intakeMot.setPower(0);
+            robot.conveyorMot.setPower(0);
+            robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        }
     }
 
     private void stopShooters() {

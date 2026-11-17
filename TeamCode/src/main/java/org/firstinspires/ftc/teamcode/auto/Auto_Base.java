@@ -163,12 +163,18 @@ public abstract class Auto_Base extends OpMode {
         mech.initPositions();
         turret.beginHoming();
 
+        // create() builds a real Follower as of 14 Nov. It no longer returns
+        // null -- it THROWS if a drivetrain motor name is missing from the
+        // config, because Mecanum resolves all four here. That is a change in
+        // failure mode: a name typo used to be invisible and now stops init.
+        // The null guards below stay, cheaply, so a future stub cannot hand
+        // the field a robot that silently does nothing.
         follower = Constants.create(hardwareMap);
         if (follower != null) follower.setPose(startPose());
 
         steps = buildSteps();
         telemetry.addLine(follower == null
-                ? "FOLLOWER IS NULL -- Constants.create() is still a stub"
+                ? "FOLLOWER IS NULL -- no drivetrain, mech only"
                 : "ready, " + steps.length + " steps");
         telemetry.update();
     }
