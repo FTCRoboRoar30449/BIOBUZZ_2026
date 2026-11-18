@@ -11,100 +11,40 @@ public class TurretController {
     public static final double SERVO_TRAVEL_DEG  = 1800.0;   // 5-turn servo
     public static final double SERVO_PER_TURRET  = 2.0;      // ASSUMED 2:1
 
-    // Degrees of TURRET per 1.0 of servo position. MEASURED, not derived.
-    //
-    // It used to be SERVO_TRAVEL_DEG / SERVO_PER_TURRET = 900, which assumed
-    // a 5-turn servo and 2:1 gearing. On the built robot, sweeping the
-    // commanded band 0.289..0.711 -- 0.422 of servo range -- moves the turret
-    // 190 deg, not the 380 that implies. So the real figure is 450: either
-    // the gearing is 4:1 or the servo is not 5-turn.
-    //
-    // Every commanded angle scales with this. At 900 the turret moved HALF
-    // what was asked and nothing said so -- a 30 deg sign test produced 15.
-    // 13 Nov, second measurement, taken with BOTH servo positions and encoder
-    // ticks at the stops: servo 0.24..0.57 (0.330) against 5447 ticks
-    // (239.4 deg) gives 725 deg per 1.0 of servo.
-    //
-    // CONFIRMED 14 Nov by a run that captured all three points together:
-    //     + limit (LEFT)    servo 0.23   encoder  4790
-    //     zero              servo 0.41   encoder  1816
-    //     - limit (RIGHT)   servo 0.56   encoder  -808
-    //
-    // Each half gives its own ratio, and they agree:
-    //     zero -> +limit  2974 ticks = 130.7 deg over 0.180 -> 726 deg/unit
-    //     zero -> -limit  2624 ticks = 115.3 deg over 0.150 -> 769 deg/unit
-    //
-    // Earlier runs looked wildly inconsistent (1150 vs 260 deg/unit) only
-    // because the home reading came from a DIFFERENT OpMode run. init does
-    // STOP_AND_RESET_ENCODER, so absolute ticks are meaningless across runs
-    // -- compare them only within one.
+    // Degrees of TURRET per 1.0 of servo position.
     public static double TURRET_TRAVEL_DEG = 745.0;
 
-    // Half the turret's usable travel. MEASURED on the built robot, 13 Nov,
-    // from the encoder at both mechanical stops: 4707 ticks = 206.9 deg total.
-    //
-    // But that travel is NOT centred on the home switch:
-    //     home -> low end    2142 ticks =  94.1 deg
-    //     home -> high end   2565 ticks = 112.7 deg
-    //
-    // This constant is symmetric (+/-LIMIT), so it is capped by the TIGHT
-    // side, not by half the span.
-    //
-    // From zero (servo 0.4100), 14 Nov:
-    //     +130.7 deg to the LEFT limit,  -115.3 deg to the RIGHT limit
-    //
-    // Asymmetric, and this constant is symmetric (+/-LIMIT), so the TIGHT
-    // side caps it: 105 leaves 10.3 deg of margin on the right and never
-    // loads a stop in a match.
-    //
-    // It pairs with TURRET_TRAVEL_DEG: the band is SERVO_AT_ZERO +/-
-    // LIMIT/TRAVEL, so fixing one without the other moves the ends the wrong
-    // way. Re-check after HOME_OFFSET_DEG is set, because moving zero to true
-    // forward changes how the asymmetry falls.
+    // Half the turret's usable travel.
     public static double TURRET_LIMIT_DEG = 105.0;
 
     public static double ENCODER_TICKS_PER_REV = 8192.0;
 
     // 0.4100: the servo position at which the home magnet trips, measured
-    // 13 Nov. Homing adopts whatever it finds, so this is only the starting
-    // guess -- but a guess 0.09 out shifted the whole band and made the first
-    // search start from the wrong place.
-    public static double SERVO_AT_ZERO = 0.4100;
+    // Backlash band at 0 deg, MEASURED 17 Nov: 0.3926 .. 0.4033, which is
+    // 7.97 deg of turret output the servo can traverse with the turret
+    // stationary. 0.4100 sat 0.0067 ABOVE that band -- 4.99 deg past it --
+    // so the servo pushed against the mechanism continuously (the buzzing)
+    // and the turret settled 5 deg off forward. The upper edge keeps the
+    // mechanism loaded the same way it already was.
+    // The MIDPOINT of the band. Paired with the lash compensation below,
+    // +/- half the lash lands exactly on each edge: 0.39795 + 0.00535 =
+    // 0.4033, minus the same = 0.3926.
+    public static double SERVO_AT_ZERO = 0.39795;
 
     // -1, from the direction labels taken 14 Nov: the + limit is the turret
-    // shooting LEFT, at servo 0.23, which is BELOW zero (0.4100). Positive
-    // degrees therefore DECREASE the servo position.
-    //
-    // This was +1, so every commanded angle aimed at the MIRROR of the target
-    // -- the one turret fault that nothing else reveals, because the shot is
-    // perfectly executed in the wrong direction.
     public static int SERVO_SIGN = -1;
 
-    // +1: at the + limit (left) the encoder reads 4790, against -808 at the
-    // other end, so ticks increase with positive degrees. The -1 measured on
-    // step 22 was taken before the travel scale was corrected and against a
-    // step that moved half what it claimed; this comes from the limits
-    // themselves and supersedes it.
+    // +1: at the + limit (left) the encoder reads 4790, against -808
     public static int ENCODER_SIGN = +1;
     public static boolean LIMIT_TRIGGERED_STATE = false;
 
     // ---- tuning ----------------------------------------------------------
-    // Which side the search tries FIRST. It alternates either way --
-    // 0, +s, -s, +2s, -2s -- so it finds the magnet whichever this is. But a
-    // turret carries its own harness, and sweeping away from the magnet first
-    // doubles the travel and winds the cables the wrong way before it comes
-    // back. Set this toward the side the switch is actually on.
-    // +1 from 13 Nov. On this robot that is COUNTER-CLOCKWISE seen from
-    // above, which is the short way to the magnet; -1 swept clockwise and
-    // went the long way round, winding the harness first.
-    //
-    // The sign-to-direction mapping is not fixed: it goes through
-    // SERVO_SIGN, which step 8 measures. If SERVO_SIGN is ever flipped, this
-    // flips with it. Y on the HOME step changes it live.
     public static int SEARCH_FIRST_DIR = +1;
 
-    // 85: the magnet sits well off the stored zero, and 30 could not reach it
-    // -- homing reported FAILED with the cause nowhere on screen.
+    // 85: the magnet sits well off the stored zero, and 30 could not reach
+    // Init verifies the switch and stops. The sweep is a recovery action --
+    // gamepad 2 start in TeleOp, RB on the RobotSetup init screen.
+    public static boolean AUTO_SEARCH_ON_INIT = false;
     public static double SEARCH_SPAN_DEG = 85.0;
     public static double SEARCH_STEP_DEG = 0.5;
     public static long SEARCH_STEP_MS = 40;
@@ -132,9 +72,7 @@ public class TurretController {
         this.servo = robot.turretRot;
         this.limit = robot.magneticLimitSwitch;
 
-        // A 5-turn servo only reaches its full 1800 deg if the PWM range is
-        // widened. With the SDK default it will travel roughly a third of
-        // that, and every commanded angle will come up short.
+        // A 5-turn servo only reaches its full 1800 deg if the PWM range
         if (servo instanceof ServoImplEx) {
             ((ServoImplEx) servo).setPwmRange(new PwmControl.PwmRange(500, 2500));
         }
@@ -143,15 +81,6 @@ public class TurretController {
     // ---- aiming ----------------------------------------------------------
 
     // The home switch is a repeatable reference MARK, not the zero you want.
-    // Nothing guarantees the magnet lands exactly at robot-forward, and on the
-    // built robot it does not: homing leaves the turret about 45 deg off.
-    //
-    // This is the turret angle AT THE SWITCH, measured from true forward.
-    // Homing adopts it, so forward stays forward however the magnet is
-    // mounted -- and moving the magnet later only changes this one number.
-    //
-    // Sign follows SERVO_SIGN, so do not derive it: set a magnitude, re-home,
-    // and look. If the turret ends up twice as far out, flip the sign.
     public static double HOME_OFFSET_DEG = 0.0;
 
     public static double servoPositionFor(double turretDeg) {
@@ -176,17 +105,6 @@ public class TurretController {
     public static boolean ENCODER_COUPLED = false;
 
     // ---- closed loop on the through-bore ----------------------------------
-    //
-    // Open loop asks the servo for a position and assumes it arrives. On this
-    // robot it does not: a fast 95 deg ramp tracks, but a slow 22.5 deg creep
-    // delivers about 1 deg -- slip, deadband, compliance, take your pick. All
-    // three are invisible to an open loop and all three are corrected by the
-    // same thing: there is an encoder on the turret OUTPUT, so measure where
-    // it actually is and trim the command until it agrees.
-    //
-    // servoTrim is that correction. It is an offset on top of the open-loop
-    // position, NOT a replacement for it, so a sane command is still issued
-    // even if the loop is off or the encoder stops reading.
     public static boolean CLOSED_LOOP = false;      // off until signs are verified
     public static double CL_KP        = 0.35;       // fraction of error per loop
     public static double CL_TOL_DEG   = 0.75;       // inside this, stop correcting
@@ -202,12 +120,14 @@ public class TurretController {
         double next = clampTurret(turretDeg);
         double delta = Math.abs(next - commandedDeg);
         // Only restart the clock on a real move, so holding a target steady
-        // does not keep resetting the settle timer.
         if (delta > 0.25) {
+            // Direction of travel decides which side of the lash the output
+            // is resting on. Only a real move flips it, so holding a target
+            // does not oscillate the correction.
+            lashDir = next > commandedDeg ? +1 : -1;
             lastMoveDeg = delta;
             moveStartMs = System.currentTimeMillis();
-            // A new target invalidates the trim earned at the old one. Keeping
-            // it would carry one position's slip into the next.
+            // A new target invalidates the trim earned at the old one.
             servoTrim = 0.0;
             clSaturated = false;
         }
@@ -215,15 +135,40 @@ public class TurretController {
         writeServo();
     }
 
+    // Backlash. MEASURED 17 Nov: the servo traverses 0.3926..0.4033 at
+    // 0 deg with the output stationary, so the gear train has 7.97 deg of
+    // play. Without compensation the turret lands up to 4 deg off whenever
+    // it reverses -- 2.7 in of lateral miss at 39 in.
+    //
+    // The output trails the servo by half the lash on whichever side it is
+    // being pushed from, so the correction is half the lash in the
+    // direction of travel. Re-measure with RobotSetup step 18, Y.
+    // 7.97 deg, from the hand-measured band 0.3926..0.4033.
+    //
+    // The encoder test gave 11.9, 17.5 and 13.4 deg with the band wandering
+    // 13 deg between runs. That is the servo deflecting under load rather
+    // than a gear gap, so the figure it returns depends on how hard it is
+    // being pushed at the time. The hand measurement is the better number
+    // because it was taken unloaded. SERVO REPLACEMENT IS THE REAL FIX --
+    // after the 22 Nov match.
+    public static boolean LASH_COMPENSATE = true;
+    public static double LASH_DEG = 7.97;
+    private int lashDir = +1;
+
+    public int getLashDir() { return lashDir; }
+
     private void writeServo() {
-        double pos = servoPositionFor(commandedDeg) + servoTrim;
+        double eff = commandedDeg;
+        if (LASH_COMPENSATE) {
+            // Clamped again: near a limit the correction would otherwise
+            // ask for travel the turret does not have.
+            eff = clampTurret(commandedDeg + lashDir * LASH_DEG / 2.0);
+        }
+        double pos = servoPositionFor(eff) + servoTrim;
         servo.setPosition(pos < 0 ? 0 : (pos > 1 ? 1 : pos));
     }
 
-    // Nudge the command until the ENCODER agrees with the target. Bounded by
-    // CL_MAX_TRIM so a wrong ENCODER_SIGN cannot run away -- it saturates and
-    // says so instead, which is the failure you want from a loop whose sign
-    // you have not yet proved.
+    // Nudge the command until the ENCODER agrees with the target.
     private void serviceClosedLoop() {
         if (!CLOSED_LOOP || !ENCODER_COUPLED || !encoderZeroed) return;
         if (homeState != HomeState.HOMED) return;      // homing owns the servo
@@ -251,8 +196,7 @@ public class TurretController {
 
     public boolean isSettled() {
         if (System.currentTimeMillis() - moveStartMs < settleTimeMs()) return false;
-        // With the loop running, "settled" means the ENCODER agrees -- not
-        // that a timer expired. A clock cannot tell you the turret slipped.
+        // With the loop running, "settled" means the ENCODER agrees --
         if (CLOSED_LOOP && ENCODER_COUPLED && encoderZeroed) {
             double s = getSlipDeg();
             return Double.isNaN(s) || Math.abs(s) <= ARRIVED_TOLERANCE_DEG;
@@ -269,8 +213,6 @@ public class TurretController {
         if (!encoderZeroed) return Double.NaN;
         int ticks = robot.intakeMot.getCurrentPosition() - encoderZeroTicks;
         // The encoder was zeroed AT THE SWITCH, where the turret really sits
-        // at HOME_OFFSET_DEG. Without this term getSlipDeg() would read a
-        // permanent HOME_OFFSET_DEG of slip and isSettled() would never agree.
         return ENCODER_SIGN * ticks * 360.0 / ENCODER_TICKS_PER_REV
                 + HOME_OFFSET_DEG;
     }
@@ -297,6 +239,13 @@ public class TurretController {
         searchOffsetDeg = 0.0;
         searchStep = 0;
         setTurretDeg(0.0);
+        // Zero the through-bore HERE, at SERVO_AT_ZERO, rather than waiting
+        // for the switch. The turret is parked at zero between matches, so
+        // this is the reference; the switch check that follows says whether
+        // that was true. Without it getMeasuredDeg() stays NaN whenever the
+        // switch does not confirm, which takes the closed loop and the lash
+        // test down with it.
+        zeroEncoderHere();
     }
 
     public void beginSearch() {
@@ -315,8 +264,12 @@ public class TurretController {
                 if (isAtHomeSwitch()) {
                     adoptHomeAt(servoPositionFor(0.0));
                 } else {
+                    // Sit still and say so. Sweeping 85 deg at every init is
+                    // what vibrated the turret on 17 Nov, and it is not worth
+                    // doing when the turret is already parked at zero: the
+                    // useful information is simply whether the switch sees it.
                     homeState = HomeState.NEEDS_SEARCH;
-                    beginSearch();
+                    if (AUTO_SEARCH_ON_INIT) beginSearch();
                 }
                 break;
 
@@ -325,23 +278,12 @@ public class TurretController {
                 lastStepMs = now;
 
                 if (isAtHomeSwitch()) {
-                    // The offset we had to add IS the correction to the
-                    // stored constant. Fold it in so it is right from now on.
+                    // The offset we had to add IS the correction
                     adoptHomeAt(servoPositionFor(searchOffsetDeg));
                     break;
                 }
 
-                // Walk outward, alternating sides, FIRST_DIR first:
-                //   +1 -> +s, -s, +2s, -2s, ...
-                //   -1 -> -s, +s, -2s, +2s, ...
-                //
-                // The old version toggled a flag and negated the running
-                // offset, which looks equivalent and is not: starting on the
-                // negative side it computed -|0| = 0, burned a step commanding
-                // nowhere, and then went positive. Both settings produced the
-                // SAME sweep, one step apart -- which is exactly what the
-                // robot did on 13 Nov. Deriving each offset from a counter
-                // cannot drift like that.
+                // Walk outward, alternating sides, FIRST_DIR first
                 searchStep++;
                 int ring = (searchStep + 1) / 2;          // 1,1,2,2,3,3,...
                 int side = (searchStep % 2 == 1)          // first, second, ...
@@ -362,11 +304,7 @@ public class TurretController {
         serviceClosedLoop();
     }
 
-    // The switch has been found at servoPosAtSwitch. The turret is therefore
-    // physically at HOME_OFFSET_DEG, not at zero -- so back the stored zero
-    // off by that much and record that we are standing at the offset, not at
-    // forward. Compute servoPosAtSwitch BEFORE calling: it is read with the
-    // OLD SERVO_AT_ZERO, which is where the servo actually is.
+    // The switch has been found at servoPosAtSwitch.
     private void adoptHomeAt(double servoPosAtSwitch) {
         SERVO_AT_ZERO = servoPosAtSwitch
                 - SERVO_SIGN * HOME_OFFSET_DEG / TURRET_TRAVEL_DEG;

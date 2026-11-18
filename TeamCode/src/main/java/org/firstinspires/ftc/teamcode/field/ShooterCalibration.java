@@ -8,6 +8,8 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 
 import org.firstinspires.ftc.teamcode.robot.HoodMap;
+import org.firstinspires.ftc.teamcode.robot.MechController;
+import org.firstinspires.ftc.teamcode.robot.RobotHardware;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,16 +23,24 @@ public class ShooterCalibration extends LinearOpMode {
     public static String NECTAR_MOTOR = "nectarShootingMot";
     public static String POLLEN_HOOD  = "hoodPollen";
     public static String NECTAR_HOOD  = "hoodNectar";
+    public static String CONVEYOR_MOTOR = "conveyorMot";
+    public static String POLLEN_BED     = "conveyorPollen";
+    public static String NECTAR_BED     = "conveyorNectar";
 
-    public static double TICKS_PER_REV = 28.0;
+    // Let the servo reach the bed before the belt pushes a ball at it.
+    public static long FEED_SETTLE_MS = 150;
+    // Belt travel is 400-500 ticks, well under a second.
+    public static long FEED_TIMEOUT_MS = 2500;
 
-    public static double VELOCITY_PIDF_P = 1.13;
-    public static double VELOCITY_PIDF_I = 0.113;
-    public static double VELOCITY_PIDF_D = 0.0;
-    public static double VELOCITY_PIDF_F = 10.78;
+    // TAKEN FROM RobotHardware, not copied, so the rig cannot drift away
+    public static double TICKS_PER_REV   = RobotHardware.SHOOTER_TICKS_PER_REV;
+    public static double VELOCITY_PIDF_P = RobotHardware.SHOOTER_KP;
+    public static double VELOCITY_PIDF_I = RobotHardware.SHOOTER_KI;
+    public static double VELOCITY_PIDF_D = RobotHardware.SHOOTER_KD;
+    public static double VELOCITY_PIDF_F = RobotHardware.SHOOTER_KF;
 
     // ---- physical constants (must match the shooter classes) -------------
-    public static final double WHEEL_DIA_M = 0.072;
+    public static final double WHEEL_DIA_M = RobotHardware.SHOOTER_WHEEL_DIA_M;
     public static final double AIR_DENSITY = 1.225;
     public static final double G           = 9.81;
     public static final double DT          = 0.0015;
@@ -68,6 +78,8 @@ public class ShooterCalibration extends LinearOpMode {
 
     private DcMotorEx pollenMotor, nectarMotor;
     private Servo pollenHood, nectarHood;
+    private DcMotorEx conveyorMotor;
+    private Servo pollenBed, nectarBed;
 
     @Override
     public void runOpMode() {
@@ -75,6 +87,9 @@ public class ShooterCalibration extends LinearOpMode {
         nectarMotor = tryMotor(NECTAR_MOTOR);
         pollenHood  = tryServo(POLLEN_HOOD);
         nectarHood  = tryServo(NECTAR_HOOD);
+        conveyorMotor = tryMotor(CONVEYOR_MOTOR);
+        pollenBed   = tryServo(POLLEN_BED);
+        nectarBed   = tryServo(NECTAR_BED);
 
         telemetry.addLine("BioBuzz shooter calibration");
         telemetry.addLine(pollenMotor == null
@@ -89,6 +104,10 @@ public class ShooterCalibration extends LinearOpMode {
         telemetry.addLine(nectarHood == null
                 ? "WARNING: missing servo: " + NECTAR_HOOD
                 : "Nectar hood found: " + NECTAR_HOOD);
+        // Only a warning: the rig is still usable hand-fed without
+        telemetry.addLine(conveyorMotor == null || pollenBed == null || nectarBed == null
+                ? "WARNING: no conveyor/beds -- A will not feed, hand-feed instead"
+                : "Feed ready: " + CONVEYOR_MOTOR);
 
         // Use encoder-based RUN_USING_ENCODER velocity control on both motors.
         configureShooterMotor(pollenMotor);
@@ -189,10 +208,13 @@ public class ShooterCalibration extends LinearOpMode {
     private DcMotorEx activeMotor() { return nectar ? nectarMotor : pollenMotor; }
     private Servo activeHood()      { return nectar ? nectarHood  : pollenHood;  }
 
+    // Mirrors RobotHardware.configureShooter().
     private void configureShooterMotor(DcMotorEx motor) {
         if (motor == null) return;
-        motor.setDirection(DcMotorSimple.Direction.REVERSE); // matches RobotHardware
+        motor.setDirection(DcMotorSimple.Direction.FORWARD);   // both, measured 13 Nov
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        // Coast like the robot does.
+        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         motor.setVelocityPIDFCoefficients(
                 VELOCITY_PIDF_P, VELOCITY_PIDF_I,
                 VELOCITY_PIDF_D, VELOCITY_PIDF_F);
@@ -215,6 +237,8 @@ public class ShooterCalibration extends LinearOpMode {
         spinning = false;
         if (pollenMotor != null) pollenMotor.setVelocity(0);
         if (nectarMotor != null) nectarMotor.setVelocity(0);
+        // The belt too.
+        stopFeed();
     }
 
     private void applyHood() {
@@ -223,8 +247,54 @@ public class ShooterCalibration extends LinearOpMode {
         s.setPosition(nectar ? HoodMap.nectarPos(hoodDeg) : HoodMap.pollenPos(hoodDeg));
     }
 
+    // Feed one ball, the same way the robot does.
     private void fire() {
-        // e.g. feederServo.setPosition(FEED); sleep(250); feederServo.setPosition(REST);
+        if (conveyorMotor == null || pollenBed == null || nectarBed == null) {
+            fitResult = "no conveyor/beds in config -- hand-feed the ball";
+            return;
+        }
+        if (!spinning) {
+            fitResult = "spin the flywheel first (RB) -- feeding a stopped wheel jams it";
+            return;
+        }
+
+        // Only the selected tunnel opens.
+        pollenBed.setPosition(MechController.bedPollenPos(!nectar));
+        nectarBed.setPosition(MechController.bedNectarPos(nectar));
+        sleep(FEED_SETTLE_MS);
+
+        int ticks = nectar ? MechController.TICKS_TO_SHOOT_NECTAR
+                           : MechController.TICKS_TO_SHOOT_POLLEN;
+        int target = conveyorMotor.getCurrentPosition() + ticks;
+        conveyorMotor.setTargetPosition(target);
+        conveyorMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        conveyorMotor.setPower(MechController.CONVEYOR_POWER);
+
+        // Keep drawing while it runs: the flywheel RPM dip as the ball goes
+        long deadline = System.currentTimeMillis() + FEED_TIMEOUT_MS;
+        boolean timedOut = false;
+        while (opModeIsActive() && conveyorMotor.isBusy()) {
+            if (System.currentTimeMillis() > deadline) { timedOut = true; break; }
+            draw();
+        }
+
+        stopFeed();
+        restBeds();
+        fitResult = timedOut
+                ? "FEED TIMED OUT after " + ticks + " ticks requested -- belt jammed?"
+                : "fed " + (nectar ? "NECTAR" : "POLLEN") + " (" + ticks + " ticks)";
+    }
+
+    private void stopFeed() {
+        if (conveyorMotor == null) return;
+        conveyorMotor.setPower(0);
+        conveyorMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+    }
+
+    // Both beds back up, which is where MechController leaves them after
+    private void restBeds() {
+        if (pollenBed != null) pollenBed.setPosition(MechController.bedPollenPos(true));
+        if (nectarBed != null) nectarBed.setPosition(MechController.bedNectarPos(true));
     }
 
     // ---- ballistics -------------------------------------------------------

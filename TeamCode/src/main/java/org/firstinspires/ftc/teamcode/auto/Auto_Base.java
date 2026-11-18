@@ -22,10 +22,7 @@ import org.firstinspires.ftc.teamcode.robot.BallSeek;
 
 public abstract class Auto_Base extends OpMode {
 
-    // A step's path is built when the step LAUNCHES, not when the route is
-    // declared. Fixed legs ignore that and hand back the same Path; a sweep
-    // uses it to aim at a ball the camera can only see once the robot is
-    // there. Returning null means "nothing left here" and the route moves on.
+    // A step's path is built when the step LAUNCHES, not when the route
     protected interface PathSource { Path build(); }
 
     protected static final class Step {
@@ -55,13 +52,6 @@ public abstract class Auto_Base extends OpMode {
     }
 
     // Drive there AND finish the volley before moving on.
-    //
-    // Arriving is not scoring. A plain Step advances the moment the PATH is
-    // done, so a shooting step commanded at launch was cut off the instant
-    // the robot arrived -- the next step immediately set another state and
-    // drove away. With the steadiness gate holding fire until the robot
-    // stops, that left no window at all: autonomous would have driven the
-    // whole route without scoring once.
     protected Step shootLeg(Pose a, Pose b) {
         Path p = leg(a, b);
         return new Step(() -> p, MechState.SHOOTING_HIVE, null, false, true);
@@ -73,15 +63,6 @@ public abstract class Auto_Base extends OpMode {
     }
 
     // START FROM WHEREVER THE ROBOT ACTUALLY IS.
-    //
-    // The fixed helpers above bake their start pose in at buildSteps() time,
-    // which is init(). That chains correctly only while every step ends where
-    // the next one begins -- true for a fixed route, false the moment a
-    // sweep() is in it, because a sweep ends at the last ball it found, not
-    // at the pose that was declared before the match.
-    //
-    // Use these for ANY step that follows a dynamic one. The start is read at
-    // launch, so the path always begins under the robot.
     protected Step shootTo(Pose to) {
         return new Step(() -> leg(follower.pose(), to),
                 MechState.SHOOTING_HIVE, null, false, true);
@@ -91,8 +72,7 @@ public abstract class Auto_Base extends OpMode {
         return new Step(() -> leg(follower.pose(), to), onStart, onArrive, false);
     }
 
-    // Give up waiting rather than hang the whole route. A volley that cannot
-    // finish -- jam, miscount, no shot from here -- must not cost the match.
+    // Give up waiting rather than hang the whole route.
     public static double MECH_WAIT_MAX_S = 5.0;
     private long mechWaitStart = 0;
 
@@ -122,8 +102,7 @@ public abstract class Auto_Base extends OpMode {
     private boolean entered = false;
     private long emptySince = 0;
 
-    // Path helpers. Paths.line/curve is the public 3.x factory; routes should
-    // not construct AtomicPath directly.
+    // Path helpers.
     protected static Path leg(Pose a, Pose b) {
         return Paths.line(a, b).linear(a, b);
     }
@@ -163,12 +142,7 @@ public abstract class Auto_Base extends OpMode {
         mech.initPositions();
         turret.beginHoming();
 
-        // create() builds a real Follower as of 14 Nov. It no longer returns
-        // null -- it THROWS if a drivetrain motor name is missing from the
-        // config, because Mecanum resolves all four here. That is a change in
-        // failure mode: a name typo used to be invisible and now stops init.
-        // The null guards below stay, cheaply, so a future stub cannot hand
-        // the field a robot that silently does nothing.
+        // create() builds a real Follower as of 14 Nov.
         follower = Constants.create(hardwareMap);
         if (follower != null) follower.setPose(startPose());
 
@@ -194,11 +168,7 @@ public abstract class Auto_Base extends OpMode {
 
     @Override
     public void loop() {
-        // No follower: skip DRIVING, not the mechanism. The arm still needs
-        // to deploy and the turret still needs to finish homing, and both
-        // live in mech.update(). Returning here outright left the robot
-        // completely inert for the whole autonomous period and handed a
-        // stowed arm to TeleOp.
+        // No follower: skip DRIVING, not the mechanism.
         if (follower == null) {
             telemetry.addLine("FOLLOWER IS NULL -- mech only, cannot drive");
             mech.update();
@@ -228,23 +198,13 @@ public abstract class Auto_Base extends OpMode {
         Step s = steps[index];
 
         if (!launched) {
-            // onStart BEFORE the source runs. A sweep asks the camera, and
-            // the camera is only enabled in the collecting states -- asking
-            // first and commanding second means the very first query reads a
-            // detector that is still switched off.
-            //
-            // Fires once per STEP, not once per lap, or a repeating sweep
-            // would re-command the same state after every ball.
+            // onStart BEFORE the source runs.
             if (!entered && s.onStart != null) mech.setState(s.onStart);
             entered = true;
 
             Path p = s.source.build();
             if (p == null) {
                 // A repeating step gets a grace window before "nothing here"
-                // is believed. Enabling the detector only takes effect in
-                // mech.update(), which runs AFTER this, and the camera needs
-                // a frame after that -- so the first query always comes back
-                // empty and the sweep would skip itself.
                 if (s.repeat) {
                     long now = System.currentTimeMillis();
                     if (emptySince == 0) emptySince = now;
@@ -273,9 +233,6 @@ public abstract class Auto_Base extends OpMode {
     }
 
     // ---- ball sweep --------------------------------------------------------
-    // Drive to balls the camera can actually see, instead of to where balls
-    // are usually found. Re-targets after each one until the robot is full,
-    // the budget runs out, or nothing wanted is in view.
 
     // How long to keep looking before believing there is nothing here.
     public static double SWEEP_ACQUIRE_S = 1.0;
@@ -283,7 +240,6 @@ public abstract class Auto_Base extends OpMode {
     public static double SWEEP_BUDGET_S = 8.0;
 
     // Approach geometry and the degenerate-leg guard live in BallSeek, shared
-    // with the TeleOp RB handler. Tune BallSeek.APPROACH_OFFSET_IN.
     protected Step sweep() {
         final ElapsedTime budget = new ElapsedTime();
         final boolean[] fresh = { true };
@@ -294,10 +250,7 @@ public abstract class Auto_Base extends OpMode {
             Pose here = follower.pose();
             Pose to = BallSeek.targetFor(here,
                     vision.nearestWantedBall(mech.allianceTeamNectar()));
-            // Null covers no detection, a detection with no pose behind it,
-            // and a ball the robot is already standing on -- the last of
-            // which would otherwise be a zero-length path re-issued every
-            // loop. The sweep ends; the route moves on.
+            // Null covers no detection, a detection with no pose behind
             if (to == null) return null;
             return leg(here, to);
         }, MechState.INTAKE_FIELD, null, true);

@@ -33,75 +33,27 @@ public class BallDetector implements VisionProcessor {
     }
 
     // ---- HSV gates, OpenCV units: H 0-179, S 0-255, V 0-255 --------------
-    //
-    // MEASURED on the bench, C270 at 640x480, each ball filling the centre
-    // patch. Channel order confirmed RGB at the same time -- yellow read
-    // ch0/ch1 high and ch2 low, which is what rules out a swap.
-    //
-    //              H     S     V        gate set from it
-    //   pollen     29   155   161       H 21-37   S>=90   V>=95
-    //   red        173  138   209       H 163-10  S>=80   V>=100
-    //   blue       106  129   255       H 96-118  S>=75   V>=80
-    //
-    // Hue windows are the measurement +/-8. The S and V floors are well under
-    // 0.6x what was measured, because the bench is better lit than a gym and
-    // under-saturating is how you lose a ball you can see.
     public static Scalar YELLOW_LO = new Scalar(21, 90, 95);
     public static Scalar YELLOW_HI = new Scalar(37, 255, 255);
-    // Red wraps around 0, so it needs two windows. The ball measured 173, only
-    // 3 off the old window's 170 edge -- a little shadow and it fell out of
-    // the gate entirely. 163 gives it room on the side it actually sits.
+    // Red wraps around 0, so it needs two windows.
     public static Scalar RED1_LO = new Scalar(0, 80, 100);
     public static Scalar RED1_HI = new Scalar(10, 255, 255);
     public static Scalar RED2_LO = new Scalar(163, 80, 100);
     public static Scalar RED2_HI = new Scalar(179, 255, 255);
-    // Blue measured V 255 -- clipped, the camera is blowing this ball out. Its
-    // S 129 cleared the old 120 floor by 9 counts, which is not margin, it is
-    // luck. V floor stays low because a shadowed blue ball is the real risk.
+    // Blue measured V 255 -- clipped, the camera is blowing this ball out.
     public static Scalar BLUE_LO = new Scalar(96, 75, 80);
     public static Scalar BLUE_HI = new Scalar(118, 255, 255);
 
-    // Ball diameters, MEASURED 14 Nov. The two types are NOT the same size,
-    // and the difference is large: area scales with the square, so at equal
-    // range a nectar blob is 1.65x a pollen one.
+    // Ball diameters, MEASURED 14 Nov.
     public static double POLLEN_DIAM_IN = 2.8;
     public static double NECTAR_DIAM_IN = 3.6;
 
-    // Cheap pre-filter only. Run the numbers for this camera (768 px focal,
-    // 12.13 in high, pitched 40 deg down) and the ground is visible from 7.8
-    // to 29.1 in in front of the lens -- a narrow band, and within it a real
-    // ball covers:
-    //
-    //     pollen   3,786 .. 20,697 px2
-    //     nectar   6,314 .. 35,937 px2
-    //
-    // The old gates were 300 and 90000: twelve times too low and two and a
-    // half times too high. They admitted anything and rejected nothing, so a
-    // yellow scuff on the tile passed every test and became a Detection that
-    // BallSeek would drive at. These are speckle/merge bounds now; the real
-    // work is the size check below.
+    // Cheap pre-filter only.
     public static double MIN_AREA_PX = 1200;
     public static double MAX_AREA_PX = 60000;
     public static double MIN_CIRCULARITY = 0.55;
 
-    // Size consistency. Range comes from the ground-plane projection, which
-    // never looks at the blob's size, so predicting the area from that range
-    // and comparing is a genuinely INDEPENDENT test -- not circular. A floor
-    // mark projects to some range perfectly happily and then turns out to be
-    // the wrong size for a ball at that range, which is how it gets caught.
-    //
-    // Tolerances are deliberately loose. Balls get clipped at frame edges and
-    // the morphology erodes blobs, so under-reading is normal; over-reading
-    // means two balls have merged. This is here to reject things that are not
-    // balls, not to grade the ones that are.
-    // TURN THIS OFF TO TEST BY HAND. The check works by predicting the area
-    // from the range, and the range comes from assuming the ball TOUCHES THE
-    // FLOOR. Hold a ball up in front of the camera and that assumption is
-    // false: the projection puts it much further away than it is, the
-    // predicted area comes out far too small, and the detection is thrown
-    // away. The detector then reports nothing for a ball plainly in view,
-    // which looks like a broken detector rather than a violated assumption.
-    // Step 14 has A bound to this for exactly that reason.
+    // Size consistency.
     public static boolean SIZE_CHECK = true;
     public static double SIZE_TOL_LO = 0.35;
     public static double SIZE_TOL_HI = 2.50;
@@ -110,16 +62,13 @@ public class BallDetector implements VisionProcessor {
         return t == BallType.POLLEN ? POLLEN_DIAM_IN : NECTAR_DIAM_IN;
     }
 
-    // What a ball of this type SHOULD cover at this range. Exposed so step 14
-    // can show predicted against measured: if a real ball sits consistently
-    // outside the tolerance, the tolerance is wrong, and that is only visible
-    // if the number is on the screen.
+    // What a ball of this type SHOULD cover at this range.
     public double expectedAreaPx(BallType t, double rangeIn, double bearingDeg) {
         double diam = diameterIn(t);
         double g0 = rangeIn * Math.cos(Math.toRadians(bearingDeg));
         double g1 = rangeIn * Math.sin(Math.toRadians(bearingDeg));
-        double dx = g0 + CAM_BEHIND_IN, dy = g1 + CAM_RIGHT_IN;
-        double dz = CAM_HEIGHT_IN - diam / 2.0;
+        double dx = g0 + C270_BEHIND_IN, dy = g1 + C270_RIGHT_IN;
+        double dz = C270_HEIGHT_IN - diam / 2.0;
         double slant = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (slant < 1e-6) return 0;
         double d = fx * diam / slant;
@@ -127,12 +76,12 @@ public class BallDetector implements VisionProcessor {
     }
 
     // ---- camera, from RobotHardware --------------------------------------
-    public static double CAM_HEIGHT_IN = RobotHardware.C270_HEIGHT_IN;
-    public static double CAM_BEHIND_IN = RobotHardware.C270_BEHIND_IN;
-    public static double CAM_RIGHT_IN  = RobotHardware.C270_RIGHT_IN;
-    public static double CAM_PITCH_DEG = -RobotHardware.C270_PITCH_DEG;
+    public static double C270_HEIGHT_IN = RobotHardware.C270_HEIGHT_IN;
+    public static double C270_BEHIND_IN = RobotHardware.C270_BEHIND_IN;
+    public static double C270_RIGHT_IN  = RobotHardware.C270_RIGHT_IN;
+    public static double C270_PITCH_DEG = -RobotHardware.C270_PITCH_DEG;
 
-    public static double CAM_DIAGONAL_FOV_DEG = RobotHardware.C270_DIAGONAL_FOV_DEG;
+    public static double C270_DIAGONAL_FOV_DEG = RobotHardware.C270_DIAGONAL_FOV_DEG;
 
     private int imgW = 640, imgH = 480;
     private double fx, fy, cx, cy;
@@ -167,7 +116,7 @@ public class BallDetector implements VisionProcessor {
 
     private void computeIntrinsics() {
         double diagPx = Math.hypot(imgW, imgH);
-        double f = (diagPx / 2.0) / Math.tan(Math.toRadians(CAM_DIAGONAL_FOV_DEG / 2.0));
+        double f = (diagPx / 2.0) / Math.tan(Math.toRadians(C270_DIAGONAL_FOV_DEG / 2.0));
         fx = f; fy = f;
         cx = imgW / 2.0;
         cy = imgH / 2.0;
@@ -188,9 +137,7 @@ public class BallDetector implements VisionProcessor {
         List<Detection> found = new ArrayList<Detection>();
 
         Core.inRange(hsv, YELLOW_LO, YELLOW_HI, mask);
-        // Count the pixels BEFORE collect() applies its shape filter, so
-        // pollenInView() can tell "no pollen" from "pollen the round-blob
-        // filter rejected because two balls were touching".
+        // Count the pixels BEFORE collect() applies its shape filter
         int pollenPx = Core.countNonZero(mask);
         collect(mask, BallType.POLLEN, found);
 
@@ -207,10 +154,7 @@ public class BallDetector implements VisionProcessor {
                 return Double.compare(a.rangeIn, b.rangeIn);
             }
         });
-        // Only while accepting. setProcessorEnabled(false) does not stop a
-        // frame already in flight, so without this test that frame completes
-        // after markStale() and writes detections back -- resurrecting a
-        // previous flower's count while the detector is supposed to be off.
+        // Only while accepting.
         synchronized (lock) {
             if (accepting) { latest = found; pollenMaskPx = pollenPx; }
         }
@@ -231,7 +175,6 @@ public class BallDetector implements VisionProcessor {
         centreH = mean.val[0]; centreS = mean.val[1]; centreV = mean.val[2];
 
         // The delivered frame may carry an alpha channel; only the first three
-        // are colour, and Core.mean fills the rest with zero regardless.
         Mat rawRoi = raw.submat(r);
         Scalar rawMean = Core.mean(rawRoi);
         rawRoi.release();
@@ -246,7 +189,6 @@ public class BallDetector implements VisionProcessor {
                 break;
             case NECTAR_RED:
                 // Red wraps 0, so the low window anchors at 0 and the high
-                // window anchors at 179; only the width and the S/V floors move.
                 RED1_LO = new Scalar(0, sMin, vMin);
                 RED1_HI = new Scalar(hLo, 255, 255);
                 RED2_LO = new Scalar(hHi, sMin, vMin);
@@ -272,7 +214,6 @@ public class BallDetector implements VisionProcessor {
 
     private void collect(Mat binary, BallType type, List<Detection> out) {
         // Open then close: kill speckle, then fill the holes in a perforated
-        // ball, which otherwise fragments into several small blobs.
         Mat k = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
         Imgproc.morphologyEx(binary, binary, Imgproc.MORPH_OPEN, k);
         Imgproc.morphologyEx(binary, binary, Imgproc.MORPH_CLOSE, k);
@@ -291,28 +232,19 @@ public class BallDetector implements VisionProcessor {
 
             Rect r = Imgproc.boundingRect(c);
             // The ball TOUCHES the floor at the bottom of its silhouette.
-            // Using the centroid would place it half a ball-diameter too far.
             double u = r.x + r.width / 2.0;
             double v = r.y + r.height;
 
             double[] g = groundPoint(u, v);
             if (g == null) continue;                  // ray never meets the floor
 
-            // Predict the blob's size from the range the GEOMETRY gave us and
-            // compare with what was actually measured. Distance is to the
-            // ball's CENTRE, half a diameter off the floor, not to the
-            // contact point -- using the contact point would over-predict the
-            // area for the near balls, which are the ones that matter most.
+            // Predict the blob's size from the range the GEOMETRY gave us
             double diam = diameterIn(type);
-            double dx = g[0] - (-CAM_BEHIND_IN);
-            double dy = g[1] - (-CAM_RIGHT_IN);
-            double dz = CAM_HEIGHT_IN - diam / 2.0;
+            double dx = g[0] - (-C270_BEHIND_IN);
+            double dy = g[1] - (-C270_RIGHT_IN);
+            double dz = C270_HEIGHT_IN - diam / 2.0;
             double slant = Math.sqrt(dx * dx + dy * dy + dz * dz);
             // fx is set in init(), which the VisionPortal calls before any
-            // frame -- but if that ever changed, predArea would be 0, every
-            // ratio would be 0, and the check would silently reject EVERY
-            // detection. Fail open: a check that cannot run must not be the
-            // thing that empties the list.
             if (SIZE_CHECK && fx > 0 && slant > 1e-6) {
                 double predDpx = fx * diam / slant;
                 double predArea = Math.PI / 4.0 * predDpx * predDpx;
@@ -331,9 +263,8 @@ public class BallDetector implements VisionProcessor {
         double xn = (u - cx) / fx;
         double yn = (v - cy) / fy;
 
-        double p = Math.toRadians(CAM_PITCH_DEG);
-        // Camera basis in robot coords. Rear-facing, so its "right" is the
-        // robot's LEFT -- looking backwards reverses the sense.
+        double p = Math.toRadians(C270_PITCH_DEG);
+        // Camera basis in robot coords.
         double[] fwd   = { -Math.cos(p), 0, -Math.sin(p) };
         double[] right = { 0, 1, 0 };
         double[] down  = { Math.sin(p), 0, -Math.cos(p) };
@@ -343,7 +274,7 @@ public class BallDetector implements VisionProcessor {
         double rz = fwd[2] + xn * right[2] + yn * down[2];
         if (rz >= -1e-6) return null;                 // at or above the horizon
 
-        double camX = -CAM_BEHIND_IN, camY = -CAM_RIGHT_IN, camZ = CAM_HEIGHT_IN;
+        double camX = -C270_BEHIND_IN, camY = -C270_RIGHT_IN, camZ = C270_HEIGHT_IN;
         double t = -camZ / rz;
         return new double[] { camX + t * rx, camY + t * ry };
     }
@@ -356,18 +287,7 @@ public class BallDetector implements VisionProcessor {
 
     // ---- what the FSM asks for -------------------------------------------
 
-    // Called when the processor is switched off. Results outlive the frames
-    // that produced them, and a count from the LAST flower read as current
-    // is the one error that hurts -- a stale 0 abandons a flower that is
-    // still full. Null makes pollenInView() report -1 instead, which the FSM
-    // treats as "camera unavailable, keep collecting".
-    //
-    // This also revives a branch that was dead: latest was initialised to an
-    // empty list and never set null, so the -1 path could not happen and the
-    // documented blind fallback was unreachable.
-    // Gate on results, not just a one-shot clear. Set false BEFORE disabling
-    // the processor so any frame mid-flight is discarded rather than landing
-    // after the clear.
+    // Called when the processor is switched off.
     private boolean accepting = true;
 
     public void setAccepting(boolean on) {
@@ -392,19 +312,7 @@ public class BallDetector implements VisionProcessor {
             int n = 0;
             for (Detection d : latest) if (d.type == BallType.POLLEN) n++;
 
-            // TOUCHING BALLS. Two balls in contact merge into one peanut-shaped
-            // contour whose circularity is well under MIN_CIRCULARITY, so the
-            // round-blob filter throws it away and n comes back 0 -- with a
-            // clearly visible pile of pollen in frame.
-            //
-            // That is the one error that actually hurts: INTAKE_FLOWER_* reads
-            // this ONLY as "is there any pollen left", and a false 0 makes it
-            // quit a flower that still has balls in it. Undercounting 3 as 2
-            // costs nothing, because the number itself is never used.
-            //
-            // So when the shape filter finds nothing but a ball's worth of
-            // pollen-coloured pixels is present, report 1. Pessimistic about
-            // the count, honest about the only question being asked.
+            // TOUCHING BALLS.
             if (n == 0 && pollenMaskPx >= MIN_AREA_PX) return 1;
             return n;
         }
@@ -434,7 +342,6 @@ public class BallDetector implements VisionProcessor {
     public void onDrawFrame(Canvas canvas, int onscreenWidth, int onscreenHeight,
                             float scaleBmpPxToCanvasPx, float scaleCanvasDensity,
                             Object userContext) {
-        // Nothing drawn: the driver station preview costs frame rate and this
-        // camera is not something a driver aims by eye.
+        // Nothing drawn: the driver station preview costs frame rate
     }
 }

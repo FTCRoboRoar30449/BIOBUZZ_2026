@@ -2,11 +2,7 @@ package org.firstinspires.ftc.teamcode.field;
 
 import com.pedropathing.math.Pose;
 
-// No data of its own. Every pose is Red mirrored across x = 72, so a
-// coordinate fixed in Red.java is fixed on both alliances at once.
-//
-// The goal constants prove the mirror: red goals sit at x 59.25, blue at
-// 84.75, and 59.25 + 84.75 = 144.
+// No data of its own.
 public final class Blue {
 
     private Blue() {}

@@ -36,9 +36,6 @@ public final class ShooterAdapter {
     }
 
     // ---- auto-aim zones, PEDRO inches ------------------------------------
-    // Supplied by the team as ZONE DEFINITIONS ONLY -- the aim points come
-    // from the shooter classes' aperture constants, which sit 5.25 in outboard
-    // of the tag clusters these numbers were taken from.
     public static final class Zone {
         public final double x0, y0, x1, y1;
         public final double targetX, targetY;

@@ -51,48 +51,25 @@ public class RobotHardware {
 
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 
-    // Measured 14 Nov with the flywheels fitted. Free run gave 2240 ticks/s
-    // at 11.55 V, so F = 32767/2240 = 14.63 AT THAT VOLTAGE.
-    //
-    // F is voltage-dependent, and a match spans a wide range of it:
-    //     11.55 V -> 2240 ticks/s -> F 14.63
-    //     12.00 V -> 2327         -> F 14.08
-    //     12.40 V -> 2405         -> F 13.63
-    //     13.00 V -> 2521         -> F 13.00
-    //
-    // Set for MID-MATCH, about 12.0 V. Taking the figure from a flat pack
-    // over-drives a fresh one; taking it from a fresh pack leaves the motor
-    // short later, when it matters. P absorbs what is left either way.
-    //
-    // Was 10.78, from 3040 ticks/s at 13.0 V on a BARE ROTOR. The flywheels
-    // cost about 17% of free speed, so that figure was never going to hold.
-    //
-    // 11.55 V is the LOADED figure -- the pack rested at 12.25 V, so that is
-    // 0.70 V of sag with both flywheels at full power. Holding 2650 rpm draws
-    // far less than that, so the real operating voltage is around 11.95 and
-    // 14.08 lands within half a percent of it. Loaded voltage is the right
-    // basis for F: it is what the motor actually sees while it runs.
-    //
-    // Still worth re-measuring on a pack rested above 12.4 V, which is what
-    // the readiness check asks for -- 12.25 is just under.
+    // Measured 14 Nov with the flywheels fitted.
     public static final double SHOOTER_KF = 14.08;
 
-    // P corrects what F gets wrong, so it is sized from F: 0.1 x F is the
-    // usual starting point, which would be 1.41. 1.53 is what the page could
-    // actually reach (its fine step was 0.1) and it measured well against
-    // 1237 commanded:
-    //     pollen  1220..1260   spread 40 ticks/s  (3.2%)
-    //     nectar  1240..1260   spread 20 ticks/s  (1.6%)
-    // Both hold the target. Chasing 1.41 would be fitting noise.
-    //
-    // Pollen is twice as noisy as nectar on identical gains, so it is not the
-    // tuning: flywheel balance, bearing drag, or that motor's encoder. Not a
-    // blocker, but it is the difference that decides the dip question below.
+    // P corrects what F gets wrong, so it is sized from F: 0.1 x F
     public static final double SHOOTER_KP = 1.53;
     public static final double SHOOTER_KI = 0.15;
     public static final double SHOOTER_KD = 0.0;
 
     public static final double SHOOTER_MAX_TICKS_PER_SEC = 3040.0;
+
+    // Flywheel. Single source: ShooterRed/Blue and ShooterCalibration read it.
+    public static final double SHOOTER_WHEEL_DIA_M = 0.072;
+
+    // Limelight 3A, on USB 3.
+    public static final double LIMELIGHT_BACK_IN   = 15.066 / 25.4;   // 0.5932
+    public static final double LIMELIGHT_HEIGHT_IN = 441.327 / 25.4;  // 17.375
+    public static final double LIMELIGHT_PITCH_DEG = 45.0;
+    public static final double LIMELIGHT_HFOV_HALF = 27.25;
+    public static final double LIMELIGHT_VFOV_HALF = 21.0;
 
     public static final double C270_RIGHT_IN  = 1.732;   //  44.000 mm
     public static final double C270_BEHIND_IN = 5.871;   // 149.128 mm
@@ -100,29 +77,12 @@ public class RobotHardware {
     public static final double C270_PITCH_DEG = -40.0;   // below horizontal
     public static final double C270_DIAGONAL_FOV_DEG = 55.0;
 
-    // Intake wheel centre, from CAD 6 Nov. Same rear face as the camera and
-    // the same 44 mm offset, so the C270 looks straight down the collecting
-    // path -- a ball in view is a ball the intake can reach.
-    //
-    // Measured twice and agreed: origin->intake is Y 258.590, Z -96.440, and
-    // camera->intake is dY 109.462, dZ 211.735, which lands on the same point
-    // from the camera constants above.
+    // Intake wheel centre, from CAD 6 Nov.
     public static final double INTAKE_RIGHT_IN  = 1.732;    //  44.000 mm
     public static final double INTAKE_BEHIND_IN = 10.181;   // 258.590 mm
     public static final double INTAKE_HEIGHT_IN = 3.797;    //  96.440 mm
 
-    // THE COLLECTING POSE. Robot centre to flower centre with the robot
-    // parked and collecting, from the CAD assembly: 369.193 mm horizontal,
-    // flower reference at Z 0 like the origin. 4.35 in further out than the
-    // intake wheel -- the wheel reaches the balls sitting in the flower, not
-    // the flower's centre.
-    //
-    // MechController's FLOWER_* bands are built around this: scoop out at
-    // +5, intake on at +2, so both are live before the robot arrives.
-    //
-    // Loose balls on the floor are a different problem and use
-    // INTAKE_BEHIND_IN instead -- there the wheel itself has to reach the
-    // ball, so the offset is 10.181, not 14.535.
+    // THE COLLECTING POSE.
     public static final double FLOWER_COLLECT_IN = 14.535;  // 369.193 mm
 
     public final Position cameraPosition =
@@ -134,12 +94,7 @@ public class RobotHardware {
     public RobotHardware(HardwareMap hwMap, Telemetry telemetry) {
         this.telemetry = telemetry;
 
-        // Ports as configured on the robot, 13 Nov. C = Control Hub,
-        // E = Expansion Hub. A motor's ENCODER must be in the matching
-        // numbered encoder port, or getCurrentPosition() reads nothing while
-        // the motor still runs -- that is what the nectar buzz turned out to
-        // be. The drivetrain's four motors are NOT resolved here; they are
-        // named in pedro/Constants.java and only exist once create() does.
+        // Ports as configured on the robot, 13 Nov.
         conveyorMot = hwMap.get(DcMotor.class, "conveyorMot");                   // C3
         intakeMot = hwMap.get(DcMotor.class, "intakeMot");                       // E3
 
@@ -184,14 +139,7 @@ public class RobotHardware {
         conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         conveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // Both FORWARD, measured on the built robot 13 Nov -- both needed Y on
-        // RobotSetup DIRECTION. They were REVERSE, which would have read
-        // NEGATIVE velocity: every RPM gate, the exit detector and the dip
-        // counter work off getVelocity(), so a wrong direction here is not
-        // just a backwards flywheel, it breaks the shot logic outright.
-        //
-        // Separate calls, not one shared helper: the flywheels are mirror
-        // mounted and there is no rule that they match.
+        // Both FORWARD, measured on the built robot 13 Nov -- both needed Y
         configureShooter(nectarShootingMot, DcMotor.Direction.FORWARD);
         configureShooter(pollenShootingMot, DcMotor.Direction.FORWARD);
     }
@@ -201,7 +149,6 @@ public class RobotHardware {
         m.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         m.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         // Coast, not brake: braking a flywheel between shots wastes spin-up
-        // time and heats the motor for no benefit.
         m.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         m.setVelocityPIDFCoefficients(SHOOTER_KP, SHOOTER_KI, SHOOTER_KD, SHOOTER_KF);
     }

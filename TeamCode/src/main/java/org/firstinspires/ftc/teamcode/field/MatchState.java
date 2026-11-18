@@ -1,16 +1,6 @@
 package org.firstinspires.ftc.teamcode.field;
 
 // Carries pose and inventory from autonomous into TeleOp.
-//
-// Statics survive between OpModes in one process and nothing else does, so
-// this is how the two halves of a match talk. It replaces MatchStateRed and
-// MatchStateBlue, which were two near-identical copies of this file.
-//
-// isFresh(alliance) answers one question: "did OUR autonomous write this,
-// recently?" It is false when the data is stale, when nothing wrote it, or
-// when the OTHER alliance's autonomous wrote it -- so a blue TeleOp can never
-// inherit red's inventory. Always ask before trusting a field; acting on the
-// last match's pose is worse than having none.
 public final class MatchState {
 
     public enum Alliance { RED, BLUE }

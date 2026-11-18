@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.field;
 
+import org.firstinspires.ftc.teamcode.robot.RobotHardware;
+
 public final class ShooterRed {
 
     private ShooterRed() {}
@@ -18,8 +20,6 @@ public final class ShooterRed {
     public static double pedroToDiagram(double pedroIn)   { return pedroIn - PEDRO_OFFSET_IN; }
 
     // ---- targets, PEDRO inches -------------------------------------------
-    // field (-12.75, +18.14) -> pedro (59.25, 90.14)   far side
-    // field (-12.75, -18.14) -> pedro (59.25, 53.86)   audience side
     private static final double[] GOAL_X = { 59.25, 59.25 };
     private static final double[] GOAL_Y = { 90.14, 53.86 };
     // cluster: field (-12.75, +/-12.89) -> pedro (59.25, 84.89 / 59.11)
@@ -47,7 +47,6 @@ public final class ShooterRed {
     public static final double AXIS_LAT = 100.0 / 25.4;   // 3.9370
 
     // ---- flywheel --------------------------------------------------------
-    public static final double WHEEL_DIA_M = 0.072;
 
     public static double efficiency = 0.50;
 
@@ -55,18 +54,8 @@ public final class ShooterRed {
     public static final double TABLE_MAX_IN = 39.0;
 
     // ---- Limelight 3A, turret-mounted ------------------------------------
-    // Rotates with the turret, so its boresight azimuth IS the turret bearing.
-    // 54.5 x 42 deg is the 3A's FOV -- the narrowest Limelight made.
-    public static final double CAM_BACK_IN   = 15.066 / 25.4;   // 0.5932
-    public static final double CAM_HEIGHT_IN = 441.327 / 25.4;  // 17.375
-    public static final double CAM_PITCH_DEG = 45.0;
-    public static final double CAM_HFOV_HALF = 27.25;
-    public static final double CAM_VFOV_HALF = 21.0;
 
     // ---- tables, one entry per inch of range from 15 in -------------------
-    // Hood is discrete and each row's speed belongs to that row's hood, so
-    // look the pair up by nearest inch rather than interpolating across a
-    // hood change. Nearest-inch costs <= 0.025 m/s against a ~5% tolerance.
     private static final double[] POLLEN_HOOD = {
             80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 75, 75, 75,
             75, 75, 70, 70, 70, 70, 70, 70, 70, 70, 70, 70 };
@@ -127,7 +116,6 @@ public final class ShooterRed {
         final double bearing = Math.atan2(dy, dx);
 
         // Range depends on hood through the setback, and hood comes from range.
-        // One refinement pass is ample: the setback never exceeds 0.8 in.
         double range = dAxis + setbackIn(ball, 70.0);
         double hood  = hoodAt(ball, index(range));
         range = dAxis + setbackIn(ball, hood);
@@ -139,7 +127,7 @@ public final class ShooterRed {
         final double conf = (ball == Ball.POLLEN) ? POLLEN_MAKE[i] : NECTAR_MAKE[i];
         if (conf < MIN_CONFIDENCE_PCT) return Shot.invalid();
 
-        final double rpm = 60.0 * v / (Math.PI * WHEEL_DIA_M * efficiency);
+        final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * efficiency);
         final double bearingDeg = Math.toDegrees(bearing);
         return new Shot(true, wrap180(robotYawDeg - bearingDeg), hood, rpm, range, bearingDeg, conf);
     }
@@ -283,8 +271,8 @@ public final class ShooterRed {
     public static double tagOffsetDeg(Target tgt, double x, double y,
                                       double robotYawDeg, double turretDeg) {
         double psi = Math.toRadians(robotYawDeg);
-        double cx = x - CAM_BACK_IN * Math.cos(psi);
-        double cy = y - CAM_BACK_IN * Math.sin(psi);
+        double cx = x - RobotHardware.LIMELIGHT_BACK_IN * Math.cos(psi);
+        double cy = y - RobotHardware.LIMELIGHT_BACK_IN * Math.sin(psi);
         double bore = robotYawDeg - turretDeg;
         double toTag = Math.toDegrees(Math.atan2(tagY(tgt) - cy, tagX(tgt) - cx));
         return wrap180(toTag - bore);
@@ -292,17 +280,17 @@ public final class ShooterRed {
 
     public static double tagElevationDeg(Target tgt, double x, double y, double robotYawDeg) {
         double psi = Math.toRadians(robotYawDeg);
-        double cx = x - CAM_BACK_IN * Math.cos(psi);
-        double cy = y - CAM_BACK_IN * Math.sin(psi);
+        double cx = x - RobotHardware.LIMELIGHT_BACK_IN * Math.cos(psi);
+        double cy = y - RobotHardware.LIMELIGHT_BACK_IN * Math.sin(psi);
         double d = Math.hypot(tagX(tgt) - cx, tagY(tgt) - cy);
-        return Math.toDegrees(Math.atan2(TAG_Z - CAM_HEIGHT_IN, d));
+        return Math.toDegrees(Math.atan2(TAG_Z - RobotHardware.LIMELIGHT_HEIGHT_IN, d));
     }
 
     public static boolean tagInView(Target tgt, double x, double y,
                                     double robotYawDeg, double turretDeg) {
-        if (Math.abs(tagOffsetDeg(tgt, x, y, robotYawDeg, turretDeg)) > CAM_HFOV_HALF) return false;
+        if (Math.abs(tagOffsetDeg(tgt, x, y, robotYawDeg, turretDeg)) > RobotHardware.LIMELIGHT_HFOV_HALF) return false;
         double el = tagElevationDeg(tgt, x, y, robotYawDeg);
-        return Math.abs(el - CAM_PITCH_DEG) <= CAM_VFOV_HALF;
+        return Math.abs(el - RobotHardware.LIMELIGHT_PITCH_DEG) <= RobotHardware.LIMELIGHT_VFOV_HALF;
     }
 
     public static double expectedMakePct(Ball ball, double rangeIn) {
