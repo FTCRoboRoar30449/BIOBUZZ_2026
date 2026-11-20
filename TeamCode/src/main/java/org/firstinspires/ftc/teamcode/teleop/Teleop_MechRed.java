@@ -74,7 +74,7 @@ public class Teleop_MechRed extends OpMode {
     public static double STICK_CANCEL = 0.15;
 
     // true rotates the sticks into the field frame; only as good as the heading.
-    public static boolean FIELD_CENTRIC = false;
+    public static boolean FIELD_CENTRIC = true;
     public static int LATERAL_SIGN = +1;   // flip if strafe mirrors again
 
     // Name of the pose an automated drive is heading for, or null when
@@ -243,9 +243,9 @@ public class Teleop_MechRed extends OpMode {
         if (mech.bedsDropped()) {
             telemetry.addData("BEDS", "DOWN  %.1f s left", mech.bedDropRemainingMs() / 1000.0);
         }
-        if (!MechController.USE_COLOR_SENSORS) {
-            telemetry.addData("Colour sensors", "OFF -- gp2 LB/RB index, dpad counts");
-        }
+        telemetry.addData("Sensors", "intake %s   tunnels %s",
+                MechController.USE_INTAKE_COLOR ? "ON, auto count" : "OFF, count by hand",
+                MechController.USE_TUNNEL_SENSORS ? "ON" : "OFF, index on LB/RB");
         telemetry.addData("Bench pose", USE_POSE_PRESETS
                 ? String.format("%s   (%.1f, %.1f @ %.0f)   back/LB to change",
                         POSE_NAMES[poseIdx], POSES[poseIdx][0],

@@ -25,6 +25,7 @@ public class MechController {
     private BallToShoot activeShotBall = BallToShoot.NONE;
     private long shotPhaseStartMs = 0;
     private int feedTargetPosition = 0;
+    private long conveyorStartMs = 0;
     private int shotsCompleted = 0;
     private OperationStatus operationStatus = OperationStatus.NOT_STARTED;
 
@@ -38,6 +39,17 @@ public class MechController {
     public static int TICKS_TO_SHOOT_POLLEN = 400;   // measured 14 Nov (was 300)
     public static int TICKS_TO_SHOOT_NECTAR = 500;   // measured 14 Nov (was 200)
     public static int TICKS_TO_SHOOT_BOTH = 500;   // measured 14 Nov (was 300)
+
+    // 17 Nov: the TICKS_TO_SHOOT_* stroke does not carry a ball from the
+    // tunnel to the flywheel. Index strokes and the encoder are fine, so this
+    // affects the feed only. False runs the belt for FEED_RUN_MS instead.
+    public static boolean FEED_BY_TICKS = false;
+    public static long FEED_RUN_MS = 900;    // UNMEASURED, time it on the robot
+
+    // Index strokes moved onto a timer too, 17 Nov. Shorter than a feed:
+    // the ball only moves up one storage slot.
+    public static boolean INDEX_BY_TICKS = false;
+    public static long INDEX_RUN_MS = 500;   // UNMEASURED
     public static final int MAX_CONVEYOR_ROTATION = 300;   // bed servo span, deg
     // Four positions, not a shared pair.
     public static double BED_POLLEN_ENGAGED    = 0.360;
@@ -206,7 +218,11 @@ public class MechController {
     private void serviceConveyorCompletion() {
         if (activeConveyor == ConveyorType.NONE) return;
         if (shotOwnsBelt()) return;
-        if (robot.conveyorMot.isBusy()) return;
+        if (INDEX_BY_TICKS) {
+            if (robot.conveyorMot.isBusy()) return;
+        } else if (System.currentTimeMillis() - conveyorStartMs < INDEX_RUN_MS) {
+            return;
+        }
 
         robot.conveyorMot.setPower(0);
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
@@ -947,7 +963,7 @@ public class MechController {
                 }
                 break;
             case FEEDING:
-                if (now - shotPhaseStartMs >= FEED_MIN_MS && !robot.conveyorMot.isBusy()) {
+                if (feedComplete(now)) {
                     lastFeedMs = now - shotPhaseStartMs;
                     finishFeed(activeShotBall); shotPhase = ShotPhase.RECOVER; shotPhaseStartMs = now;
                 } else if (now - shotPhaseStartMs > SHOOTER_FEED_TIMEOUT_MS) {
@@ -1018,9 +1034,9 @@ public class MechController {
 
     private void updateConveyor() {
         // Both false while the sensors are off, which is the quiet state
-        boolean pollen = USE_COLOR_SENSORS
+        boolean pollen = USE_TUNNEL_SENSORS
                 && vision.ballCheck(robot.sensorPollenL, robot.sensorPollenR);
-        boolean nectar = USE_COLOR_SENSORS
+        boolean nectar = USE_TUNNEL_SENSORS
                 && vision.ballCheck(robot.sensorNectarL, robot.sensorNectarR);
 
         // Continuous flow already runs the belt and carries balls
@@ -1108,6 +1124,12 @@ public class MechController {
         // This stroke is an index, not a feed.
         flowAnchorValid = false;
         activeConveyor = type;
+        conveyorStartMs = System.currentTimeMillis();
+        if (!INDEX_BY_TICKS) {
+            robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            robot.conveyorMot.setPower(CONVEYOR_POWER);
+            return;
+        }
         robot.conveyorMot.setTargetPosition(conveyorTargetPosition);
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_TO_POSITION);
         robot.conveyorMot.setPower(CONVEYOR_POWER);
@@ -1124,10 +1146,23 @@ public class MechController {
         } else {
             conveyorNectar(1); conveyorPollen(0); ticks = TICKS_TO_SHOOT_NECTAR;
         }
+        if (!FEED_BY_TICKS) {
+            // Same mode the continuous-flow path uses, which does move balls.
+            feedTargetPosition = 0;
+            robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            robot.conveyorMot.setPower(CONVEYOR_POWER);
+            return;
+        }
         feedTargetPosition = robot.conveyorMot.getCurrentPosition() + ticks;
         robot.conveyorMot.setTargetPosition(feedTargetPosition);
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_TO_POSITION);
         robot.conveyorMot.setPower(CONVEYOR_POWER);
+    }
+
+    private boolean feedComplete(long now) {
+        long elapsed = now - shotPhaseStartMs;
+        if (!FEED_BY_TICKS) return elapsed >= FEED_RUN_MS;
+        return elapsed >= FEED_MIN_MS && !robot.conveyorMot.isBusy();
     }
 
     private void finishFeed(BallToShoot ball) {
@@ -1191,11 +1226,20 @@ public class MechController {
     private void setBedsUp() { conveyorNectar(1); conveyorPollen(1); }
 
     // Colour sensors are mechanically blind: all six sit recessed in holes
-    public static boolean USE_COLOR_SENSORS = false;
+    // Split 17 Nov: the two sensor groups were fixed separately.
+    //
+    // INTAKE pair drives counting and wrong-ball rejection. Working.
+    // TUNNEL pairs drive automatic indexing. Still blind, so indexing stays
+    // on the gamepad 2 bumpers.
+    //
+    // The bumpers do not touch the counts, so automatic counting and manual
+    // indexing coexist without double-counting.
+    public static boolean USE_INTAKE_COLOR = true;
+    public static boolean USE_TUNNEL_SENSORS = false;
 
     // 0 is already this method's "nothing in front of the sensor" value
     private int intakeColor() {
-        if (!USE_COLOR_SENSORS) return 0;
+        if (!USE_INTAKE_COLOR) return 0;
         return vision.ballColor(robot.sensorIntakeR, robot.sensorIntakeL);
     }
     public static final int NECTAR_TUNNEL_CAPACITY = 3;

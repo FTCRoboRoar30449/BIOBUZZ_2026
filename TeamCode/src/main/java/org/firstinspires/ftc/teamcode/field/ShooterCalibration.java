@@ -29,8 +29,34 @@ public class ShooterCalibration extends LinearOpMode {
 
     // Let the servo reach the bed before the belt pushes a ball at it.
     public static long FEED_SETTLE_MS = 150;
-    // Belt travel is 400-500 ticks, well under a second.
-    public static long FEED_TIMEOUT_MS = 2500;
+    // A is hold-to-run: counted strokes do not clear the tunnel. Releasing A
+    // stops the belt; this is only the backstop if A is held down.
+    public static long FEED_MAX_MS = 3000;
+
+    // Measure to the FRONT BUMPER FACE instead of plumbing down from the
+    // hood. The flight model starts at the ball's exit point, so the gap
+    // between the two is added back before fitting.
+    //
+    // Datum is RobotHardware.BUMPER_FWD_IN, measured 17 Nov. A wrong datum
+    // biases every sample equally, which the fit absorbs as a wrong
+    // efficiency rather than showing up as scatter.
+    public static boolean MEASURE_FROM_BUMPER = true;
+    public static double BUMPER_FWD_IN = RobotHardware.BUMPER_FWD_IN;
+
+    // Exit sits ShooterRed.AXIS_FWD ahead of centre, less the hood-dependent
+    // setback, so the correction shifts about half an inch across the range.
+    private static double exitFwdOfCentreIn(boolean nectar, double hoodDeg) {
+        return ShooterRed.AXIS_FWD - ShooterRed.setbackIn(
+                nectar ? ShooterRed.Ball.NECTAR : ShooterRed.Ball.POLLEN, hoodDeg);
+    }
+
+    private static double bumperToExitIn(boolean nectar, double hoodDeg) {
+        return BUMPER_FWD_IN - exitFwdOfCentreIn(nectar, hoodDeg);
+    }
+
+    private static double toFlightIn(double measured, boolean nectar, double hoodDeg) {
+        return MEASURE_FROM_BUMPER ? measured + bumperToExitIn(nectar, hoodDeg) : measured;
+    }
 
     // TAKEN FROM RobotHardware, not copied, so the rig cannot drift away
     public static double TICKS_PER_REV   = RobotHardware.SHOOTER_TICKS_PER_REV;
@@ -74,6 +100,8 @@ public class ShooterCalibration extends LinearOpMode {
     private double measuredIn = 0.0;
     private double cd = 0.55;   // pinned; see runCdDiagnostic()
     private boolean spinning = false;
+    private boolean feeding = false;
+    private long feedStartMs = 0;
     private String fitResult = "(not run)";
 
     private DcMotorEx pollenMotor, nectarMotor;
@@ -88,6 +116,7 @@ public class ShooterCalibration extends LinearOpMode {
         pollenHood  = tryServo(POLLEN_HOOD);
         nectarHood  = tryServo(NECTAR_HOOD);
         conveyorMotor = tryMotor(CONVEYOR_MOTOR);
+        if (conveyorMotor != null) conveyorMotor.setDirection(RobotHardware.CONVEYOR_DIR);
         pollenBed   = tryServo(POLLEN_BED);
         nectarBed   = tryServo(NECTAR_BED);
 
@@ -128,11 +157,15 @@ public class ShooterCalibration extends LinearOpMode {
 
             if (up && !pUp)     field = (field + 4) % 5;
             if (down && !pDown) field = (field + 1) % 5;
-            if (left && !pLeft)   adjust(-1);
-            if (right && !pRight) adjust(+1);
+            boolean coarse = gamepad1.left_trigger > 0.5 || gamepad1.right_trigger > 0.5;
+            if (left && !pLeft)   adjust(-1, coarse);
+            if (right && !pRight) adjust(+1, coarse);
 
             if (rb && !pRB) { spinning = !spinning; applyFlywheel(); }
-            if (a && !pA)   fire();
+            if (a && !pA)   beginFire();
+            if (feeding && (!a || System.currentTimeMillis() - feedStartMs > FEED_MAX_MS)) {
+                endFire(a);
+            }
             if (b && !pB && measuredIn > 0) {
                 DcMotorEx selectedMotor = activeMotor();
                 double measuredRpm = actualRpm();
@@ -141,8 +174,15 @@ public class ShooterCalibration extends LinearOpMode {
                 } else if (!Double.isFinite(measuredRpm) || measuredRpm < 0.0) {
                     fitResult = "Cannot record: encoder RPM is invalid";
                 } else {
-                    samples.add(new Sample(nectar, hoodDeg, measuredRpm, measuredIn));
-                    fitResult = "Recorded actual encoder RPM: " + fmt(measuredRpm);
+                    // Store FLIGHT distance. The fit compares against a
+                    // trajectory that starts at the ball's exit point, so
+                    // the bumper offset is applied once, here, rather than
+                    // being carried through the model.
+                    double flightIn = toFlightIn(measuredIn, nectar, hoodDeg);
+                    samples.add(new Sample(nectar, hoodDeg, measuredRpm, flightIn));
+                    fitResult = String.format(Locale.US,
+                            "rec %.0f rpm   %.1f in from bumper -> %.1f flight",
+                            measuredRpm, measuredIn, flightIn);
                 }
             }
             if (x && !pX && !samples.isEmpty()) samples.remove(samples.size() - 1);
@@ -161,13 +201,15 @@ public class ShooterCalibration extends LinearOpMode {
 
     // ---- UI ---------------------------------------------------------------
 
-    private void adjust(int dir) {
+    // Hold either trigger for the coarse step. Without it a 90 in shot takes
+    // 90 presses to enter.
+    private void adjust(int dir, boolean coarse) {
         switch (field) {
             case 0: nectar = !nectar; break;
             case 1: hoodDeg = clamp(hoodDeg + 5.0 * dir, 55.0, 80.0); break;
-            case 2: targetRpm = clamp(targetRpm + 25.0 * dir, 0.0, 6000.0);
+            case 2: targetRpm = clamp(targetRpm + (coarse ? 100.0 : 25.0) * dir, 0.0, 6000.0);
                 if (spinning) applyFlywheel(); break;
-            case 3: measuredIn = clamp(measuredIn + 1.0 * dir, 0.0, 400.0); break;
+            case 3: measuredIn = clamp(measuredIn + (coarse ? 10.0 : 1.0) * dir, 0.0, 400.0); break;
             case 4: cd = clamp(cd + 0.01 * dir, 0.30, 0.90); break;
         }
     }
@@ -179,14 +221,19 @@ public class ShooterCalibration extends LinearOpMode {
         double rpmNow = actualRpm();
         telemetry.addLine(sel(2) + "rpm target: " + fmt(targetRpm)
                 + "   actual " + (Double.isFinite(rpmNow) ? fmt(rpmNow) : "NO ENCODER"));
-        telemetry.addLine(sel(3) + "distance  : " + fmt(measuredIn) + " in");
+        telemetry.addLine(sel(3) + "distance  : " + fmt(measuredIn) + " in"
+                + (MEASURE_FROM_BUMPER
+                   ? "  from BUMPER  (flight " + fmt(toFlightIn(measuredIn, nectar, hoodDeg)) + ")"
+                   : "  from EXIT point"));
         telemetry.addLine(sel(4) + "Cd (pinned): " + String.format(Locale.US, "%.2f", cd));
         telemetry.addLine("");
         telemetry.addLine("flywheel " + (spinning ? "SPINNING" : "stopped")
+                + (feeding ? "   BELT RUNNING" : "")
                 + "   samples " + samples.size());
         telemetry.addLine("fit: " + fitResult);
         telemetry.addLine("");
-        telemetry.addLine("RB spin  A fire  B record  X undo  Y fit  LB Cd-sweep  back CSV");
+        telemetry.addLine("dpad up/dn pick  L/R change  trigger = coarse");
+        telemetry.addLine("RB spin  A HOLD to feed  B record  X undo  Y fit  LB Cd-sweep  back CSV");
         telemetry.update();
     }
 
@@ -247,8 +294,9 @@ public class ShooterCalibration extends LinearOpMode {
         s.setPosition(nectar ? HoodMap.nectarPos(hoodDeg) : HoodMap.pollenPos(hoodDeg));
     }
 
-    // Feed one ball, the same way the robot does.
-    private void fire() {
+    // Hold A: the belt runs until you let go. A counted stroke does not carry
+    // the ball from the tunnel to the flywheel.
+    private void beginFire() {
         if (conveyorMotor == null || pollenBed == null || nectarBed == null) {
             fitResult = "no conveyor/beds in config -- hand-feed the ball";
             return;
@@ -263,26 +311,21 @@ public class ShooterCalibration extends LinearOpMode {
         nectarBed.setPosition(MechController.bedNectarPos(nectar));
         sleep(FEED_SETTLE_MS);
 
-        int ticks = nectar ? MechController.TICKS_TO_SHOOT_NECTAR
-                           : MechController.TICKS_TO_SHOOT_POLLEN;
-        int target = conveyorMotor.getCurrentPosition() + ticks;
-        conveyorMotor.setTargetPosition(target);
-        conveyorMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
+        conveyorMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         conveyorMotor.setPower(MechController.CONVEYOR_POWER);
+        feeding = true;
+        feedStartMs = System.currentTimeMillis();
+        fitResult = "feeding " + (nectar ? "NECTAR" : "POLLEN") + " -- release A to stop";
+    }
 
-        // Keep drawing while it runs: the flywheel RPM dip as the ball goes
-        long deadline = System.currentTimeMillis() + FEED_TIMEOUT_MS;
-        boolean timedOut = false;
-        while (opModeIsActive() && conveyorMotor.isBusy()) {
-            if (System.currentTimeMillis() > deadline) { timedOut = true; break; }
-            draw();
-        }
-
+    private void endFire(boolean hitLimit) {
+        long ran = System.currentTimeMillis() - feedStartMs;
+        feeding = false;
         stopFeed();
         restBeds();
-        fitResult = timedOut
-                ? "FEED TIMED OUT after " + ticks + " ticks requested -- belt jammed?"
-                : "fed " + (nectar ? "NECTAR" : "POLLEN") + " (" + ticks + " ticks)";
+        fitResult = (hitLimit ? "FEED STOPPED at the " + FEED_MAX_MS + " ms limit -- jammed?"
+                              : "fed " + (nectar ? "NECTAR" : "POLLEN"))
+                + String.format(Locale.US, " (%d ms)", ran);
     }
 
     private void stopFeed() {

@@ -48,8 +48,6 @@ public final class ShooterBlue {
 
     // ---- flywheel --------------------------------------------------------
 
-    public static double efficiency = 0.50;
-
     public static final double TABLE_MIN_IN = 15.0;
     public static final double TABLE_MAX_IN = 39.0;
 
@@ -127,7 +125,8 @@ public final class ShooterBlue {
         final double conf = (ball == Ball.POLLEN) ? POLLEN_MAKE[i] : NECTAR_MAKE[i];
         if (conf < MIN_CONFIDENCE_PCT) return Shot.invalid();
 
-        final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * efficiency);
+        final double eff = RobotHardware.shooterEfficiency(ball == Ball.NECTAR);
+        final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * eff);
         final double bearingDeg = Math.toDegrees(bearing);
         return new Shot(true, wrap180(robotYawDeg - bearingDeg), hood, rpm, range, bearingDeg, conf);
     }

@@ -49,6 +49,10 @@ public class RobotHardware {
     public final WebcamName camera;
     public final Limelight3A limeLight;
 
+    // Belt-forward direction. ShooterCalibration reads it: under setPower the
+    // flag decides which way the belt runs, unlike RUN_TO_POSITION.
+    public static final DcMotor.Direction CONVEYOR_DIR = DcMotor.Direction.REVERSE;
+
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 
     // Measured 14 Nov with the flywheels fitted.
@@ -63,6 +67,20 @@ public class RobotHardware {
 
     // Flywheel. Single source: ShooterRed/Blue and ShooterCalibration read it.
     public static final double SHOOTER_WHEEL_DIA_M = 0.072;
+
+    // Fraction of flywheel surface speed the ball leaves with. Every rpm in
+    // the shot table scales with it. Measured 17 Nov, 9 shots per ball; the
+    // two balls grip differently, so they do not share a value.
+    //
+    // Nectar is trustworthy: rms 2.7 in across six hood angles.
+    // Pollen is NOT: rms 6.4 in, and the error grows toward mid-hood, which
+    // points at the replaced pollen hood's degree map. Re-measure it.
+    public static double SHOOTER_EFF_NECTAR = 0.429;
+    public static double SHOOTER_EFF_POLLEN = 0.360;   // PROVISIONAL
+
+    public static double shooterEfficiency(boolean nectar) {
+        return nectar ? SHOOTER_EFF_NECTAR : SHOOTER_EFF_POLLEN;
+    }
 
     // Limelight 3A, on USB 3.
     public static final double LIMELIGHT_BACK_IN   = 15.066 / 25.4;   // 0.5932
@@ -84,6 +102,10 @@ public class RobotHardware {
 
     // THE COLLECTING POSE.
     public static final double FLOWER_COLLECT_IN = 14.535;  // 369.193 mm
+
+    // Robot centre to the FRONT BUMPER FACE. The datum for shooter
+    // calibration distances.
+    public static final double BUMPER_FWD_IN = 8.786;       // 223.175 mm
 
     public final Position cameraPosition =
             new Position(DistanceUnit.INCH, -C270_RIGHT_IN, -C270_BEHIND_IN, C270_HEIGHT_IN, 0);
@@ -134,7 +156,7 @@ public class RobotHardware {
         intakeMot.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         intakeMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        conveyorMot.setDirection(DcMotor.Direction.REVERSE);
+        conveyorMot.setDirection(CONVEYOR_DIR);
         conveyorMot.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         conveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
