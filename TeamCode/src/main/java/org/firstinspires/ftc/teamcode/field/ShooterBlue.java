@@ -21,7 +21,8 @@ public final class ShooterBlue {
 
     // ---- targets, PEDRO inches -------------------------------------------
     private static final double[] GOAL_X = { 84.75, 84.75 };
-    private static final double[] GOAL_Y = { 90.14, 53.86 };
+    // See ShooterRed: the four CELLS form a 25.4 in square centred on 72,72.
+    private static final double[] GOAL_Y = { 84.7, 59.3 };
     // cluster: diagram (+12.75, +/-12.89) -> pedro (84.75, 84.89 / 59.11)
     private static final double[] TAG_X  = { 84.75, 84.75 };
     private static final double[] TAG_Y  = { 84.89, 59.11 };

@@ -306,6 +306,9 @@ public class BallDetector implements VisionProcessor {
         }
     }
 
+    /** Pixels passing the POLLEN HSV gate, BEFORE any shape filter. */
+    public int pollenMaskPixels() { synchronized (lock) { return pollenMaskPx; } }
+
     public int pollenInView() {
         synchronized (lock) {
             if (latest == null) return -1;

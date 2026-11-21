@@ -17,7 +17,7 @@ public class Auto_B2_S_F_S_P extends Auto_Base {
     @Override
     protected Step[] buildSteps() {
         Path toFlower = curve(Blue.START_FAR, Blue.C_START_FLOWER, Blue.FLOWER_FAR);
-        Path toPark = curveTangent(Blue.SHOOT_FAR, Blue.C_SHOOT_PARK, Blue.PARK_FAR);
+        Path toPark = curveTangent(Blue.SHOOT_FAR, Blue.C_FAR_PARK, Blue.PARK_FAR);
         return new Step[] {
             new Step(toFlower, MechState.INTAKE_FLOWER, null),
             shootCurve(Blue.FLOWER_FAR, Blue.C_FLOWER_SHOOT, Blue.SHOOT_FAR),

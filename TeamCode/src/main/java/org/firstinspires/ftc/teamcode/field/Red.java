@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode.field;
 
 import com.pedropathing.math.Pose;
 
-// EVERY field pose.
+// EVERY field pose. Origin at the RED garden corner, x to BLUE, y to SCORING.
 public final class Red {
 
     private Red() {}
@@ -16,23 +16,24 @@ public final class Red {
 
     // ---- starts ----
     public static final Pose START            = at(56.0,  12.0,  90);
-
-    // Was (60, 134, 270): intake at y = 144.2, through the far wall.
     public static final Pose START_FAR        = at(60.2, 131.7,  90);
 
     // ---- shooting ----
-    public static final Pose SHOOT_NEAR       = at(56.0,  35.0,  90);   // 16.4 in, AUDIENCE
+    // Three per CELL, spread across that CELL's manual RANGE box so a
+    // blocked spot has two alternatives. All 31 in out, all 92.9% on the
+    // weaker ball, all divergence 0.0 so both balls go together.
+    public static final Pose SHOOT_AUD_WEST   = at(43.0,  33.0, 336);
+    public static final Pose SHOOT_AUD_MID    = at(53.0,  29.0, 356);
+    public static final Pose SHOOT_AUD_EAST   = at(74.0,  32.0,  36);
 
-    // Was y = 104.5 -- 3.5 in SHORT of the scoring zone, which starts
-    // 352, not 270. At 270 the two barrels sit side-on to the goal and their
-    // bearings diverge 17.1 deg, far over the 6 deg dual limit, so the volley
-    // is sequential. At 352 the barrels line up with the goal: divergence
-    // 0.1 deg, both shots simultaneous. Turret needs 90.3 deg, inside the
-    // 105 deg limit. 187 is the mirror option if 352 points somewhere awkward.
-    public static final Pose SHOOT_MID        = at(59.5, 120.5, 352);   // 26.6 in, SCORING
+    public static final Pose SHOOT_SCO_WEST   = at(40.0, 109.0, 226);
+    public static final Pose SHOOT_SCO_MID    = at(59.0, 116.0, 188);
+    public static final Pose SHOOT_SCO_EAST   = at(80.0, 108.0, 146);
 
-    // Was y = 134 -- in the zone, but 40.0 in against a table that stops
-    public static final Pose SHOOT_FAR        = at(60.0, 131.0, 270);   // 37.0 in, SCORING
+    // Names the autos already use.
+    public static final Pose SHOOT_NEAR       = SHOOT_AUD_MID;
+    public static final Pose SHOOT_MID        = SHOOT_SCO_MID;
+    public static final Pose SHOOT_FAR        = SHOOT_SCO_EAST;
 
     // ---- collecting ----
     public static final Pose GARDEN_APPROACH  = at(11.5,  24.0,  90);
@@ -40,23 +41,24 @@ public final class Red {
     public static final Pose GARDEN_SWEEP     = at(20.0,   8.0, 180);
     public static final Pose GARDEN_FAR       = at(10.7, 133.2,  90);
 
-    // Both flower poses were INSIDE the flower -- 6.3 in and 9.0
-    public static final Pose FLOWER_NEAR      = at(16.8,  41.0,   0);
+    // Intake sits FLOWER_COLLECT_IN ahead of centre, so these put it on the
+    // flowers at 4,48 and 48,140.
+    public static final Pose FLOWER_NEAR      = at(18.5,  48.0, 180);
     public static final Pose FLOWER_FAR       = at(48.0, 125.5,  90);
 
     // ---- parks ----
     public static final Pose PARK             = at(12.0,  97.0,  99.3);
     public static final Pose PARK_FAR         = at(12.0, 115.0, 220);
-
-    // Sits 8.4 in from the near flower.
     public static final Pose PARK_SOUTH       = at(10.6,  42.8, 180);
 
     // ---- bezier control points ----
     public static final Pose C_START_GARDEN   = at(56.0,  20.0,   0);
     public static final Pose C_GARDEN_PARK    = at(24.0,  24.0,   0);
-    public static final Pose C_GARDEN_SHOOT   = at(40.5, 140.8,   0);
+    public static final Pose C_GARDEN_SHOOT   = at(34.0, 142.0,   0);
     public static final Pose C_SHOOT_PARK     = at(12.9,  37.2,   0);
     public static final Pose C_START_FLOWER   = at(60.0, 120.0, 270);
     public static final Pose C_FLOWER_SHOOT   = at(48.0, 120.0, 270);
-    public static final Pose C_SHOOT_SOUTH    = at(13.5,  95.6,   0);
+    public static final Pose C_SHOOT_SOUTH    = at( 8.0, 102.0,   0);
+    // Keeps SHOOT_SCO_EAST -> PARK_FAR north of the hive frame.
+    public static final Pose C_FAR_PARK       = at(46.0, 125.0,   0);
 }

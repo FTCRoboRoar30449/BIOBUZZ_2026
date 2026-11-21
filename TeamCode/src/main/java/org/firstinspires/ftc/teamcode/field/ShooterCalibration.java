@@ -10,6 +10,7 @@ import com.qualcomm.robotcore.hardware.Servo;
 import org.firstinspires.ftc.teamcode.robot.HoodMap;
 import org.firstinspires.ftc.teamcode.robot.MechController;
 import org.firstinspires.ftc.teamcode.robot.RobotHardware;
+import org.firstinspires.ftc.teamcode.robot.TurretController;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +25,7 @@ public class ShooterCalibration extends LinearOpMode {
     public static String POLLEN_HOOD  = "hoodPollen";
     public static String NECTAR_HOOD  = "hoodNectar";
     public static String CONVEYOR_MOTOR = "conveyorMot";
+    public static String TURRET_SERVO   = "turretRot";
     public static String POLLEN_BED     = "conveyorPollen";
     public static String NECTAR_BED     = "conveyorNectar";
 
@@ -96,7 +98,11 @@ public class ShooterCalibration extends LinearOpMode {
     private int field = 0;                       // 0 ball, 1 hood, 2 rpm, 3 distance, 4 Cd
     private boolean nectar = false;
     private double hoodDeg = 70.0;
-    private double targetRpm = 2650.0;
+    // The six shooting presets ask for pollen 3813 rpm at hood 70 and
+    // nectar 3123 at hood 75. Across the whole table it is pollen 3684-3887
+    // and nectar 3076-3215, always hood 70/75/80. Start on the pollen
+    // working point; LEFT on the ball field switches the nectar default in.
+    private double targetRpm = 3813.0;
     private double measuredIn = 0.0;
     private double cd = 0.55;   // pinned; see runCdDiagnostic()
     private boolean spinning = false;
@@ -108,6 +114,7 @@ public class ShooterCalibration extends LinearOpMode {
     private Servo pollenHood, nectarHood;
     private DcMotorEx conveyorMotor;
     private Servo pollenBed, nectarBed;
+    private Servo turretServo;
 
     @Override
     public void runOpMode() {
@@ -115,6 +122,13 @@ public class ShooterCalibration extends LinearOpMode {
         nectarMotor = tryMotor(NECTAR_MOTOR);
         pollenHood  = tryServo(POLLEN_HOOD);
         nectarHood  = tryServo(NECTAR_HOOD);
+        // This OpMode never aims. If the turret is left off zero the ball
+        // flies sideways and the measured distance is meaningless, so park
+        // it straight ahead and say so.
+        turretServo = tryServo(TURRET_SERVO);
+        if (turretServo != null) {
+            turretServo.setPosition(TurretController.SERVO_AT_ZERO);
+        }
         conveyorMotor = tryMotor(CONVEYOR_MOTOR);
         if (conveyorMotor != null) conveyorMotor.setDirection(RobotHardware.CONVEYOR_DIR);
         pollenBed   = tryServo(POLLEN_BED);
@@ -205,7 +219,13 @@ public class ShooterCalibration extends LinearOpMode {
     // 90 presses to enter.
     private void adjust(int dir, boolean coarse) {
         switch (field) {
-            case 0: nectar = !nectar; break;
+            case 0:
+                nectar = !nectar;
+                // Jump to that ball's working point rather than carrying the
+                // other ball's numbers across.
+                targetRpm = nectar ? 3123.0 : 3813.0;
+                hoodDeg   = nectar ? 75.0   : 70.0;
+                break;
             case 1: hoodDeg = clamp(hoodDeg + 5.0 * dir, 55.0, 80.0); break;
             case 2: targetRpm = clamp(targetRpm + (coarse ? 100.0 : 25.0) * dir, 0.0, 6000.0);
                 if (spinning) applyFlywheel(); break;
@@ -232,6 +252,9 @@ public class ShooterCalibration extends LinearOpMode {
                 + "   samples " + samples.size());
         telemetry.addLine("fit: " + fitResult);
         telemetry.addLine("");
+        telemetry.addLine(turretServo == null
+                ? "TURRET NOT FOUND -- check it points straight before firing"
+                : "turret parked at zero: the ball goes straight ahead");
         telemetry.addLine("dpad up/dn pick  L/R change  trigger = coarse");
         telemetry.addLine("RB spin  A HOLD to feed  B record  X undo  Y fit  LB Cd-sweep  back CSV");
         telemetry.update();

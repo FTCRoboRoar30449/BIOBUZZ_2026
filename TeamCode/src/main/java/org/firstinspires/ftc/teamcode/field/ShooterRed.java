@@ -21,7 +21,12 @@ public final class ShooterRed {
 
     // ---- targets, PEDRO inches -------------------------------------------
     private static final double[] GOAL_X = { 59.25, 59.25 };
-    private static final double[] GOAL_Y = { 90.14, 53.86 };
+    // 21 Nov, from the game manual CAD. The four CELLS form a 25.4 in square
+    // centred on 72,72, so the aim points are 84.7 and 59.3 -- the same
+    // spacing as GOAL_X, and within 0.2 in of TAG_Y, which was already right.
+    // Was 90.14 / 53.86, which put every CELL 5.4 in too far out and so
+    // overstated every range by about 5 in.
+    private static final double[] GOAL_Y = { 84.7, 59.3 };
     // cluster: field (-12.75, +/-12.89) -> pedro (59.25, 84.89 / 59.11)
     private static final double[] TAG_X  = { 59.25, 59.25 };
     private static final double[] TAG_Y  = { 84.89, 59.11 };

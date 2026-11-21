@@ -234,8 +234,18 @@ public class MechController {
         if (!flowing) setBedsUp();
     }
 
+    // The arm swings out far enough to hit the perimeter wall if it deploys
+    // while the robot is still on it. Autonomous arms this once the first
+    // path has finished; TeleOp arms at once, because by then the robot is
+    // wherever autonomous left it.
+    public static boolean DEPLOY_AFTER_FIRST_PATH = true;
+    private boolean deployArmed = false;
+    public void armDeploy() { deployArmed = true; }
+    public boolean isDeployArmed() { return deployArmed; }
+
     private void serviceDeploy(long now) {
         if (deployDone) return;
+        if (DEPLOY_AFTER_FIRST_PATH && !deployArmed) return;
         if (deployStartMs == 0) deployStartMs = now;
 
         long since = now - deployStartMs;

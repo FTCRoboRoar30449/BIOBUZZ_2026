@@ -114,16 +114,31 @@ public abstract class Auto_Base extends OpMode {
     private boolean entered = false;
     private long emptySince = 0;
 
-    // Path helpers.
+    // MEASURED 21 Nov with the eight TestPure/TestBase runs: this drivetrain
+    // holds a fixed heading cleanly and oscillates on a moving one, on
+    // straight lines and curves alike. headingFeedback is a pure proportional
+    // controller, so a ramp leaves a standing error it cannot null -- there
+    // is no gain that fixes that, only feedforward or a piecewise gain.
+    //
+    // So every path holds its TARGET heading throughout. The turn happens as
+    // a step at the start, which the controller does null, instead of being
+    // dragged out along the path. Set false to go back to interpolation.
+    public static boolean CONSTANT_HEADING = true;
+
     protected static Path leg(Pose a, Pose b) {
+        if (CONSTANT_HEADING) return Paths.line(a, b).linear(b, b);
         return Paths.line(a, b).linear(a, b);
     }
 
     protected static Path curve(Pose a, Pose control, Pose b) {
+        if (CONSTANT_HEADING) return Paths.curve(a, control, b).linear(b, b);
         return Paths.curve(a, control, b).linear(a, b);
     }
 
+    // Tangent heading IS a ramp by definition, so it cannot be used at all
+    // until the heading controller is fixed. Falls back to constant.
     protected static Path curveTangent(Pose a, Pose control, Pose b) {
+        if (CONSTANT_HEADING) return Paths.curve(a, control, b).linear(b, b);
         return Paths.curve(a, control, b).tangent();
     }
 
@@ -248,6 +263,8 @@ public abstract class Auto_Base extends OpMode {
         if (s.repeat) return;             // re-query the source next loop
         if (s.onArrive != null) mech.setState(s.onArrive);
         index++;
+        // Off the wall now, so the intake arm may swing out.
+        mech.armDeploy();
         entered = false;
         mechWaitStart = 0;
     }

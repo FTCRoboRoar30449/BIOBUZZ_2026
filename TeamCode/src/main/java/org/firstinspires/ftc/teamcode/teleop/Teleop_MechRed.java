@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.teleop;
 
+import java.util.Locale;
+
 import com.pedropathing.api.Paths;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
@@ -8,6 +10,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.teamcode.field.MatchState;
 import org.firstinspires.ftc.teamcode.field.Red;
+import org.firstinspires.ftc.teamcode.robot.BallDetector;
 import org.firstinspires.ftc.teamcode.robot.BallSeek;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.robot.MechController;
@@ -16,42 +19,12 @@ import org.firstinspires.ftc.teamcode.robot.RobotHardware;
 import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 import org.firstinspires.ftc.teamcode.robot.TurretController;
 import org.firstinspires.ftc.teamcode.robot.VisionController;
-import java.util.Locale;
 
 @TeleOp(name = "TeleopMech RED", group = "Test")
 public class Teleop_MechRed extends OpMode {
 
-    public static double BENCH_X = 54.0, BENCH_Y = 114.0, BENCH_HEADING_DEG = 2.7;
 
-    public static boolean USE_POSE_PRESETS = true;
 
-    private static final double[][] POSES = {
-        //    x,      y,  heading
-        {  54.0, 114.0,    2.7 },   // P1  hive SCORING_SIDE
-        {  54.0,  20.0,  180.0 },   // P2  hive AUDIENCE_SIDE
-        {   4.0,  48.0,    0.0 },   // P5  flower red/audience, range 0
-        {  48.0, 140.0,    0.0 },   // P6  flower red/scoring
-        {  96.0,   4.0,    0.0 },   // P7  flower blue/audience
-        { 140.0,  96.0,    0.0 },   // P8  flower blue/scoring
-        {   4.0,  49.5,    0.0 },   // P9  1.5 in -- scoop AND intake
-        {   4.0,  52.0,    0.0 },   // P10 4.0 in -- scoop, no intake
-        {   4.0,  54.0,    0.0 },   // P11 6.0 in -- scoop folded
-        {  48.0,  40.0,    0.0 },   // P12 overlap, nearest = 4,48
-        {  96.0, 120.0,    0.0 },   // P13 overlap, nearest = 140,96
-        {  72.0,  72.0,    0.0 },   // P14 no zone at all
-        {  54.0, 100.0,    0.0 },   // P15 between the two hive zones
-        {   4.0,  96.0,    0.0 }    // P16 on the zone edge, inclusive
-    };
-    private static final String[] POSE_NAMES = {
-        "P1  hive SCORING_SIDE", "P2  hive AUDIENCE_SIDE",
-        "P5  flower red/aud",    "P6  flower red/scoring",
-        "P7  flower blue/aud",   "P8  flower blue/scoring",
-        "P9  1.5in scoop+intake","P10 4.0in scoop only",
-        "P11 6.0in folded",      "P12 overlap -> 4,48",
-        "P13 overlap -> 140,96", "P14 nowhere",
-        "P15 between zones",     "P16 zone edge"
-    };
-    private int poseIdx = 0;
 
     // Autonomous end pose, carried into TeleOp.
     private double seedX, seedY, seedH;
@@ -63,10 +36,9 @@ public class Teleop_MechRed extends OpMode {
     private ShooterAdapter shooter;
     private TurretController turret;
 
-    private boolean p1a, p1x, p1b, p1y, p1du, p1dd, p1dl, p1bk, p1lb;
+    private boolean p1a, p1du, p1dd, p1dl;
     private boolean p2a, p2x, p2b, p2y, p2du, p2dd, p2dl, p2dr;
     private boolean p2lb, p2rb, p2bk, p2st, p2lt, p2rt, p2lsb;
-    private boolean p1st;
 
     // Drive feel. PRECISION_SCALE is held, not toggled -- a held modifier
     public static double PRECISION_SCALE = 0.35;
@@ -83,8 +55,6 @@ public class Teleop_MechRed extends OpMode {
 
     // Spin test: gamepad1 start marks a reference, telemetry then shows how
     // far pose has drifted and how many turns it took.
-    private Double spinRefX = null, spinRefY = null;
-    private double spinTurns = 0, spinLastH = 0;
 
     @Override public void init() {
         robot   = new RobotHardware(hardwareMap, telemetry);
@@ -98,6 +68,8 @@ public class Teleop_MechRed extends OpMode {
         mech.setState(MechState.START);
         // Beds to the resting pattern now, not when an intake state
         mech.initPositions(MatchState.isFresh(Red.ALLIANCE) && MatchState.deployed);
+        // Autonomous already drove off the wall, so the arm is safe to swing.
+        mech.armDeploy();
 
         // Commands the turret to forward and confirms on the limit switch.
         turret.beginHoming();
@@ -146,20 +118,13 @@ public class Teleop_MechRed extends OpMode {
 
     @Override public void loop() {
         updatePoseFromSource();
-        serviceSpinTest();
 
         // ================= GAMEPAD 1 -- DRIVER ===========================
-        boolean a1 = gamepad1.a && !p1a, b1 = gamepad1.b && !p1b;
-        boolean x1 = gamepad1.x && !p1x, y1 = gamepad1.y && !p1y;
-        if (a1) driveToNearestShoot();
-        else if (b1) driveToPose(Red.GARDEN, "GARDEN");
-        else if (x1) {
-            driveNote = autoTarget != null ? "cancelled " + autoTarget
-                                           : "nothing to cancel";
-            autoTarget = null;
-        }
-        else if (y1) reseedPose();
-        p1a = gamepad1.a; p1b = gamepad1.b; p1x = gamepad1.x; p1y = gamepad1.y;
+        // A parks. Worth 5 points, and the end of a match is exactly when you
+        // do not want to be lining up by hand. Stick cancels it like any macro.
+        boolean a1 = gamepad1.a && !p1a;
+        if (a1) driveToPose(Red.PARK, "PARK");
+        p1a = gamepad1.a;
 
         // Partner cell scoring.
         boolean du1 = gamepad1.dpad_up && !p1du;
@@ -170,19 +135,14 @@ public class Teleop_MechRed extends OpMode {
         if (dl1) mech.resetCellCount();
         p1du = gamepad1.dpad_up; p1dd = gamepad1.dpad_down; p1dl = gamepad1.dpad_left;
 
-        // ---- bench pose preset, also the re-seed source -----------------
-        boolean bk1 = gamepad1.back && !p1bk;
-        boolean lb1 = gamepad1.left_bumper && !p1lb;
-        if (bk1) poseIdx = (poseIdx + 1) % POSES.length;
-        if (lb1) poseIdx = (poseIdx + POSES.length - 1) % POSES.length;
-        p1bk = gamepad1.back; p1lb = gamepad1.left_bumper;
-
         // ================= GAMEPAD 2 -- OPERATOR =========================
         boolean a2 = gamepad2.a && !p2a, b2 = gamepad2.b && !p2b;
         boolean x2 = gamepad2.x && !p2x, y2 = gamepad2.y && !p2y;
-        if (a2) mech.setState(MechState.SHOOTING_HIVE);
+        // A and Y drive there as well as arming: the operator owns the whole
+        // action, and gamepad 1 keeps only manual driving.
+        if (a2) { driveToNearestShoot(); mech.setState(MechState.SHOOTING_HIVE); }
         else if (x2) mech.setState(MechState.INTAKE_FIELD);
-        else if (y2) mech.setState(MechState.INTAKE_FLOWER);
+        else if (y2) { driveToNearestFlower(); mech.setState(MechState.INTAKE_FLOWER); }
         else if (b2) mech.setState(MechState.IDLE);
         p2a = gamepad2.a; p2b = gamepad2.b; p2x = gamepad2.x; p2y = gamepad2.y;
 
@@ -231,26 +191,46 @@ public class Teleop_MechRed extends OpMode {
         // Before allTelemetry(), which calls telemetry.update() --
         telemetry.addData("Mode", "%s%s", FIELD_CENTRIC ? "FIELD centric" : "robot centric",
                 driveNote.isEmpty() ? "" : "   " + driveNote);
-        if (spinRefX != null && follower != null) {
-            Pose sp = follower.pose();
-            telemetry.addData("SPIN", "turns %.2f   drift %+.1f, %+.1f in",
-                    spinTurns, sp.x() - spinRefX, sp.y() - spinRefY);
-        }
         telemetry.addData("Drive", autoTarget != null
-                ? "AUTO -> " + autoTarget + "   (stick or X to take over)"
+                ? "AUTO -> " + autoTarget + "   (stick to take over)"
                 : seeking ? "BALL SEEK   (release RB to take over)"
                 : gamepad1.left_trigger > 0.5 ? "manual, PRECISION" : "manual");
         if (mech.bedsDropped()) {
             telemetry.addData("BEDS", "DOWN  %.1f s left", mech.bedDropRemainingMs() / 1000.0);
         }
+        if (vision.getBallDetector() != null) {
+            java.util.List<BallDetector.Detection> ds = vision.getBallDetector().getDetections();
+            int pol = 0, red = 0, blu = 0;
+            for (BallDetector.Detection dd : ds) {
+                if (dd.type == BallDetector.BallType.POLLEN) pol++;
+                else if (dd.type == BallDetector.BallType.NECTAR_RED) red++;
+                else blu++;
+            }
+            telemetry.addData("Detector", "cam %s   %d seen  P%d R%d B%d   size-chk %s",
+                    vision.isBallDetectionEnabled() ? "ON" : "OFF",
+                    ds.size(), pol, red, blu,
+                    BallDetector.SIZE_CHECK ? "ON" : "off");
+            // Pixels through the POLLEN gate BEFORE any shape filter. Large
+            // here with 0 seen means the colour is fine and shape/size is
+            // rejecting; near zero means the HSV gate itself is wrong.
+            double[] hsvC = vision.getBallDetector().getCentreHsv();
+            telemetry.addData("Gate", "pollen mask %d px (min area %.0f)   centre HSV %.0f %.0f %.0f",
+                    vision.getBallDetector().pollenMaskPixels(), BallDetector.MIN_AREA_PX,
+                    hsvC[0], hsvC[1], hsvC[2]);
+            telemetry.addData("Pollen gate", "H %.0f-%.0f  S>=%.0f  V>=%.0f   frame %s",
+                    BallDetector.YELLOW_LO.val[0], BallDetector.YELLOW_HI.val[0],
+                    BallDetector.YELLOW_LO.val[1], BallDetector.YELLOW_LO.val[2],
+                    BallDetector.FRAME_IS_BGR ? "BGR" : "RGB");
+        }
+        telemetry.addData("Seek", seekWhy);
+        telemetry.addData("Seek state", "RB %s  seeking %s  busy %s  autoTarget %s  sticks %s",
+                gamepad1.right_bumper, seeking,
+                follower != null && follower.isBusy(),
+                autoTarget == null ? "-" : autoTarget,
+                lastSticks ? "MOVED" : "-");
         telemetry.addData("Sensors", "intake %s   tunnels %s",
                 MechController.USE_INTAKE_COLOR ? "ON, auto count" : "OFF, count by hand",
                 MechController.USE_TUNNEL_SENSORS ? "ON" : "OFF, index on LB/RB");
-        telemetry.addData("Bench pose", USE_POSE_PRESETS
-                ? String.format("%s   (%.1f, %.1f @ %.0f)   back/LB to change",
-                        POSE_NAMES[poseIdx], POSES[poseIdx][0],
-                        POSES[poseIdx][1], POSES[poseIdx][2])
-                : "fixed BENCH_X/Y -- presets off");
         if (MatchState.isFresh(Red.ALLIANCE)) {
             telemetry.addData("From auto", MatchState.summary(Red.ALLIANCE));
         }
@@ -266,15 +246,9 @@ public class Teleop_MechRed extends OpMode {
             vision.setPose(p.x(), p.y(), hd);
             return;
         }
-        double x = BENCH_X, y = BENCH_Y, h = BENCH_HEADING_DEG;
-        if (seeded) {
-            x = seedX; y = seedY; h = seedH;
-        } else if (USE_POSE_PRESETS) {
-            x = POSES[poseIdx][0]; y = POSES[poseIdx][1]; h = POSES[poseIdx][2];
-        }
-        mech.updatePose(x, y, h);
+        mech.updatePose(seedX, seedY, seedH);
         // The ball detector needs it too, or detections come back with NaN
-        vision.setPose(x, y, h);
+        vision.setPose(seedX, seedY, seedH);
     }
 
     @Override public void stop() {
@@ -286,6 +260,13 @@ public class Teleop_MechRed extends OpMode {
     private Follower follower;
     private boolean p1rb = false;
     private boolean seeking = false;
+    private String seekWhy = "idle";
+    // A fresh follow() cannot be judged idle until the follower has had a
+    // few cycles to act on it.
+    public static long SEEK_REISSUE_MS = 300;
+    private long lastSeekMs = 0;
+    private int seekIssues = 0;
+    private boolean lastSticks = false;
 
     private void serviceDrive() {
         if (follower == null) return;
@@ -307,6 +288,7 @@ public class Teleop_MechRed extends OpMode {
         boolean sticks = Math.abs(ly) > STICK_CANCEL
                       || Math.abs(lx) > STICK_CANCEL
                       || Math.abs(rx) > STICK_CANCEL;
+        lastSticks = sticks;
         if (sticks && (autoTarget != null || seeking)) {
             autoTarget = null;
             seeking = false;
@@ -319,13 +301,21 @@ public class Teleop_MechRed extends OpMode {
         // Pressing RB means "go get that ball", so it also commands
         if (rb && autoTarget == null) {
             if (!p1rb) mech.setState(MechState.INTAKE_FIELD);
-            // KEEP TRYING while held, not just on the press.
-            if (!seeking || !follower.isBusy()) seekBall();
+            // Re-issuing follow() every loop restarts the path before it can
+            // move, so the robot sits still while the Seek line keeps saying
+            // it is driving. Only re-issue once the follower is genuinely
+            // idle AND the last attempt has had time to take effect.
+            long now = System.currentTimeMillis();
+            boolean stale = now - lastSeekMs > SEEK_REISSUE_MS;
+            if (!seeking || (stale && !follower.isBusy())) {
+                lastSeekMs = now;
+                seekBall();
+            }
         } else if (!rb) {
             seeking = false;
         }
 
-        if (autoTarget == null && !seeking) {
+        if (!seeking) {
             // Held, not toggled: a precision mode you can leave switched
             double scale = gamepad1.left_trigger > 0.5 ? PRECISION_SCALE : 1.0;
             follower.manual(ly * scale, lx * scale, rx * scale);
@@ -334,26 +324,36 @@ public class Teleop_MechRed extends OpMode {
         p1rb = rb;
     }
 
-    // ---- drive-to-pose macros -------------------------------------------
+    // ---- drive-to-pose, driven from GAMEPAD 2 ---------------------------
 
     private void driveToPose(Pose to, String name) {
         if (follower == null) return;
         Pose here = follower.pose();
-        // linear(to, to) holds the target heading for the whole move. The live
-        // heading is never exactly the preset's, so linear(here, to) gave a
-        // moving setpoint, which this drivetrain oscillates on.
+        // linear(to, to) holds the target heading for the whole move: this
+        // drivetrain oscillates on a moving heading setpoint.
         follower.follow(Paths.line(here, to).linear(to, to));
-        // Macros and ball seek are mutually exclusive: both own
         seeking = false;
         autoTarget = name;
     }
 
-    // Nearest of the three shooting poses, because in TeleOp the robot can
+    // Three per CELL; pick by which CELL is raised, then by distance.
     private void driveToNearestShoot() {
         if (follower == null) return;
         Pose here = follower.pose();
-        Pose[] opts = { Red.SHOOT_NEAR, Red.SHOOT_MID, Red.SHOOT_FAR };
-        String[] names = { "SHOOT_NEAR", "SHOOT_MID", "SHOOT_FAR" };
+        ShooterAdapter.Target tgt = vision.getRaisedTarget();
+        if (tgt == null) tgt = shooter.hiveTargetForPosition(here.x(), here.y());
+        Pose[] opts;
+        String[] names;
+        if (tgt == ShooterAdapter.Target.AUDIENCE_SIDE) {
+            opts = new Pose[] { Red.SHOOT_AUD_WEST, Red.SHOOT_AUD_MID, Red.SHOOT_AUD_EAST };
+            names = new String[] { "AUD_W", "AUD_MID", "AUD_E" };
+        } else if (tgt == ShooterAdapter.Target.SCORING_SIDE) {
+            opts = new Pose[] { Red.SHOOT_SCO_WEST, Red.SHOOT_SCO_MID, Red.SHOOT_SCO_EAST };
+            names = new String[] { "SCO_W", "SCO_MID", "SCO_E" };
+        } else {
+            opts = new Pose[] { Red.SHOOT_AUD_MID, Red.SHOOT_SCO_MID };
+            names = new String[] { "AUD_MID", "SCO_MID" };
+        }
         int best = 0;
         double bestD = Double.MAX_VALUE;
         for (int i = 0; i < opts.length; i++) {
@@ -363,54 +363,67 @@ public class Teleop_MechRed extends OpMode {
         driveToPose(opts[best], names[best]);
     }
 
-    // Odometry recovery.
-    private void serviceSpinTest() {
+    private void driveToNearestFlower() {
         if (follower == null) return;
-        Pose p = follower.pose();
-        double h = Math.toDegrees(p.heading());
-
-        if (gamepad1.start && !p1st) {
-            if (spinRefX == null) {
-                spinRefX = p.x(); spinRefY = p.y();
-                spinTurns = 0; spinLastH = h;
-                driveNote = "spin ref set";
-            } else {
-                spinRefX = null; spinRefY = null;
-                driveNote = "spin ref cleared";
-            }
+        Pose here = follower.pose();
+        Pose[] opts = { Red.FLOWER_NEAR, Red.FLOWER_FAR };
+        String[] names = { "FLOWER_NEAR", "FLOWER_FAR" };
+        int best = 0;
+        double bestD = Double.MAX_VALUE;
+        for (int i = 0; i < opts.length; i++) {
+            double d = Math.hypot(opts[i].x() - here.x(), opts[i].y() - here.y());
+            if (d < bestD) { bestD = d; best = i; }
         }
-        p1st = gamepad1.start;
-
-        if (spinRefX == null) return;
-        // Unwrap so turns accumulate past +/-180 instead of folding back.
-        double d = h - spinLastH;
-        while (d > 180) d -= 360;
-        while (d < -180) d += 360;
-        spinTurns += d / 360.0;
-        spinLastH = h;
-    }
-
-    private void reseedPose() {
-        if (follower == null) { driveNote = "no follower -- cannot re-seed"; return; }
-        double x = POSES[poseIdx][0], y = POSES[poseIdx][1], h = POSES[poseIdx][2];
-        follower.setPose(new Pose(x, y, Math.toRadians(h)));
-        seedX = x; seedY = y; seedH = h;
-        autoTarget = null;
-        driveNote = String.format(Locale.US, "re-seeded to %s  %.1f, %.1f @ %.0f",
-                POSE_NAMES[poseIdx], x, y, h);
+        driveToPose(opts[best], names[best]);
     }
 
     private static int clampCount(int v) { return v < 0 ? 0 : (v > 4 ? 4 : v); }
 
+    // Why a seek did nothing, in one line.
     private void seekBall() {
         Pose here = follower.pose();
-        // The same helper autonomous uses, so the intake offset
-        Pose to = BallSeek.targetFor(here,
-                vision.nearestWantedBall(mech.allianceTeamNectar()));
-        if (to == null) {
+        if (!vision.isBallDetectionEnabled()) {
+            // serviceBallVision() only enables it from mech.update(), which
+            // runs AFTER this. Turn it on now so the first press is not wasted.
+            vision.setBallDetectionEnabled(true);
+            seekWhy = "camera off -- just enabled, hold RB";
             seeking = false;
             return;
         }
+        BallDetector.Detection d = vision.nearestWantedBall(mech.allianceTeamNectar());
+        if (d == null) {
+            // "Nothing wanted" and "nothing detected at all" are different
+            // faults: the first is the colour filter, the second is the HSV
+            // gates or SIZE_CHECK, which assumes the ball is on the floor.
+            BallDetector bd = vision.getBallDetector();
+            int n = (bd == null) ? -1 : bd.getDetections().size();
+            seekWhy = (n <= 0)
+                    ? String.format(Locale.US,
+                        "detector sees NOTHING (%d) -- HSV gates, or SIZE_CHECK %s",
+                        n, BallDetector.SIZE_CHECK ? "ON: hold it on the floor" : "off")
+                    : String.format(Locale.US,
+                        "%d detected but none wanted -- want POLLEN or nectar id %d",
+                        n, mech.allianceTeamNectar());
+            seeking = false;
+            return;
+        }
+
+        // The same helper autonomous uses, so the intake offset
+        Pose to = BallSeek.targetFor(here, d);
+        if (to == null) {
+            double gap = Math.hypot(d.fieldX - here.x(), d.fieldY - here.y());
+            seekWhy = String.format("ball %.0f in away, move < %.0f in -- already on it",
+                    gap, BallSeek.MIN_TRAVEL_IN);
+            seeking = false;
+            return;
+        }
+        double move = Math.hypot(to.x() - here.x(), to.y() - here.y());
+        seekIssues++;
         follower.follow(Paths.line(here, to).linear(here, to));
         seeking = true;
+        // Latched the loop AFTER the follow, so it survives releasing RB and
+        // says whether the follower ever accepted the path.
+        seekWhy = String.format(Locale.US,
+                "drive %.0f in to %s  #%d  busyAfterFollow=%s",
+                move, d.type, seekIssues, follower.isBusy());
     }}
