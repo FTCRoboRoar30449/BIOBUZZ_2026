@@ -109,6 +109,20 @@ public class TestPure3Circle90 extends LinearOpMode {
             telemetry.update();
         }
 
+        follower.follow(Paths.line(e, start).linear(e, start));
+        while (opModeIsActive() && follower.isBusy()) {
+            long t = System.nanoTime();
+            follower.update();
+            Pose p = follower.pose();
+            long ms = (System.nanoTime() - t) / 1000000L;
+            if (ms > worst) worst = ms;
+            telemetry.addData("leg", "return to centre");
+            telemetry.addData("pose", "%.1f, %.1f @ %.1f",
+                    p.x(), p.y(), Math.toDegrees(p.heading()));
+            telemetry.addData("worst update ms", worst);
+            telemetry.update();
+        }
+
         follower.manual(0, 0, 0);
         telemetry.addLine("done");
         telemetry.addData("worst update ms", worst);

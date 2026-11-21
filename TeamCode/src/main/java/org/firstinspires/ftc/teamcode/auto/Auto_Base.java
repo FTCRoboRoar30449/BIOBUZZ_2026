@@ -64,12 +64,23 @@ public abstract class Auto_Base extends OpMode {
 
     // START FROM WHEREVER THE ROBOT ACTUALLY IS.
     protected Step shootTo(Pose to) {
-        return new Step(() -> leg(follower.pose(), to),
+        return new Step(() -> legConst(follower.pose(), to),
                 MechState.SHOOTING_HIVE, null, false, true);
     }
 
     protected Step driveTo(Pose to, MechState onStart, MechState onArrive) {
-        return new Step(() -> leg(follower.pose(), to), onStart, onArrive, false);
+        return new Step(() -> legConst(follower.pose(), to), onStart, onArrive, false);
+    }
+
+    // Hold the TARGET heading for the whole leg instead of interpolating from
+    // the live one. Measured 19 Nov: this drivetrain tracks a fixed heading
+    // cleanly but oscillates on a moving one. leg() from two fixed poses with
+    // equal headings is already constant; a leg from follower.pose() never is,
+    // because the live heading is never exactly the target's. linear(b, b)
+    // interpolates b to b, so the setpoint is a step at the start that the
+    // controller nulls, not a ramp it chases the whole way.
+    protected static Path legConst(Pose a, Pose b) {
+        return Paths.line(a, b).linear(b, b);
     }
 
     // Give up waiting rather than hang the whole route.
@@ -99,6 +110,7 @@ public abstract class Auto_Base extends OpMode {
     private Step[] steps = new Step[0];
     private int index = 0;
     private boolean launched = false;
+    private boolean routeReleased = false;
     private boolean entered = false;
     private long emptySince = 0;
 
@@ -179,6 +191,14 @@ public abstract class Auto_Base extends OpMode {
         feedPose();
         advance();
         mech.update();
+
+        // The route is over but update() keeps holding the last path's end
+        // pose, which jitters until STOP. Hand the drive back once, and keep
+        // calling update() so the pose stays live for MatchState.
+        if (index >= steps.length && !routeReleased) {
+            follower.manual(0, 0, 0);
+            routeReleased = true;
+        }
 
         telemetry.addData("Step", index + " / " + steps.length);
         telemetry.addData("Path s", "%.1f", pathTimer.seconds());

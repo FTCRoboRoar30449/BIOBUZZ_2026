@@ -15,7 +15,7 @@ import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 public class TestBase_1_SquareFixed extends Auto_Base {
 
     @Override protected ShooterAdapter.Alliance alliance() { return ShooterAdapter.Alliance.RED; }
-    @Override protected Pose startPose() { return TestGeom.SQ0; }
+    @Override protected Pose startPose() { return TestGeom.CENTER; }
 
     private static Path ln(Pose a, Pose b)  { return Paths.line(a, b).linear(a, b); }
     private static Path lnT(Pose a, Pose b) { return Paths.line(a, b).tangent(); }
@@ -25,9 +25,12 @@ public class TestBase_1_SquareFixed extends Auto_Base {
     @Override
     protected Step[] buildSteps() {
         return new Step[] {
+            new Step(ln(TestGeom.CENTER, TestGeom.SQ0), MechState.IDLE, null),   // lead-in
             new Step(ln(TestGeom.SQ0, TestGeom.SQ1), MechState.IDLE, null),
             new Step(ln(TestGeom.SQ1, TestGeom.SQ2), MechState.IDLE, null),
             new Step(ln(TestGeom.SQ2, TestGeom.SQ3), MechState.IDLE, null),
-            new Step(ln(TestGeom.SQ3, TestGeom.SQ0), MechState.IDLE, null),        };
+            new Step(ln(TestGeom.SQ3, TestGeom.SQ0), MechState.IDLE, null),
+            new Step(ln(TestGeom.SQ0, TestGeom.CENTER), MechState.IDLE, null),   // return
+        };
     }
 }

@@ -17,12 +17,14 @@ public final class TestGeom {
     public static final double SIDE_IN = 48.0;
     public static final double RADIUS_IN = 24.0;
 
-    // Square, one corner at field centre. 72..120 in both axes, so the far
-    // corner sits 24 in off the wall.
-    public static final Pose SQ0 = CENTER;   // the square starts on the centre
-    public static final Pose SQ1 = at(120.0, 72.0, 90);
-    public static final Pose SQ2 = at(120.0, 120.0, 90);
-    public static final Pose SQ3 = at(72.0,  120.0, 90);
+    // 48 in square CENTRED on 72,72, same centre as the circle, so the two
+    // shapes cover the same ground. Corners at 48 and 96 on both axes. The
+    // robot starts on the centre, so a diagonal lead-in runs CENTER -> SQ0
+    // first, 33.9 in. Counter-clockwise, like the circle.
+    public static final Pose SQ0 = at(96.0, 48.0, 90);
+    public static final Pose SQ1 = at(96.0, 96.0, 90);
+    public static final Pose SQ2 = at(48.0, 96.0, 90);
+    public static final Pose SQ3 = at(48.0, 48.0, 90);
 
     // Circle of dia 48 CENTRED on 72,72. The robot cannot start on its own
     // centre, so a 24 in lead-in runs CENTER -> CIR_E first. That lead-in

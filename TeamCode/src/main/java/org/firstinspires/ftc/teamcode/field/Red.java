@@ -24,7 +24,12 @@ public final class Red {
     public static final Pose SHOOT_NEAR       = at(56.0,  35.0,  90);   // 16.4 in, AUDIENCE
 
     // Was y = 104.5 -- 3.5 in SHORT of the scoring zone, which starts
-    public static final Pose SHOOT_MID        = at(59.5, 120.5, 270);   // 26.6 in, SCORING
+    // 352, not 270. At 270 the two barrels sit side-on to the goal and their
+    // bearings diverge 17.1 deg, far over the 6 deg dual limit, so the volley
+    // is sequential. At 352 the barrels line up with the goal: divergence
+    // 0.1 deg, both shots simultaneous. Turret needs 90.3 deg, inside the
+    // 105 deg limit. 187 is the mirror option if 352 points somewhere awkward.
+    public static final Pose SHOOT_MID        = at(59.5, 120.5, 352);   // 26.6 in, SCORING
 
     // Was y = 134 -- in the zone, but 40.0 in against a table that stops
     public static final Pose SHOOT_FAR        = at(60.0, 131.0, 270);   // 37.0 in, SCORING

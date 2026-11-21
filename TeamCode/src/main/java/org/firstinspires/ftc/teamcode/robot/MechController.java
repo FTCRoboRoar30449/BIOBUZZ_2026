@@ -92,6 +92,8 @@ public class MechController {
     private static final long TURRET_SETTLE_TIMEOUT_MS = 2500;
     public static double SHOOTER_READY_TOLERANCE = 0.95;
     public static boolean REQUIRE_HOMED = true;
+    // 21 Nov: SHOOTING_HIVE streams rather than firing one ball at a time.
+    public static boolean HIVE_CONTINUOUS = true;
     // flowerIntake measured stops, 13 Nov: 0.445 ..
     public static double FLOWER_REST = 0.540, FLOWER_SCOOP = 0.445;
 
@@ -472,6 +474,13 @@ public class MechController {
             }
 
             case SHOOTING_HIVE: {
+                // Stream every ball on one belt run instead of arming, feeding
+                // and waiting out SHOOTER_RECOVER_MS per ball. Same path the
+                // flower shots use. Set false to go back to the per-ball FSM.
+                if (HIVE_CONTINUOUS) {
+                    serviceContinuousFire(now, true);
+                    break;
+                }
                 if (REQUIRE_HOMED && !turret.isHomed()) {
                     stopShooterMotors(); stopFeedConveyor();
                     operationStatus = OperationStatus.TURRET_NOT_HOMED;
@@ -691,7 +700,14 @@ public class MechController {
         }
         // A flower shot is pollen by definition.
         if (hive ? totalBalls() <= 0 : countPollen <= 0) {
-            shotNote = "holding fire: nothing to shoot"; haltFlow(); return;
+            shotNote = "holding fire: nothing to shoot"; haltFlow();
+            // Empty in the dedicated shooting state means the volley is over.
+            // Without this an auto shoot step waits out MECH_WAIT_MAX_S every
+            // time, because mechDone() reads isOperationComplete().
+            if (currentState == MechState.SHOOTING_HIVE) {
+                operationStatus = OperationStatus.COMPLETED;
+            }
+            return;
         }
         // We own the wheels now, not pre-spin.
         preSpinning = false;

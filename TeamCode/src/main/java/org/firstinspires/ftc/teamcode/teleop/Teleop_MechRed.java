@@ -339,7 +339,10 @@ public class Teleop_MechRed extends OpMode {
     private void driveToPose(Pose to, String name) {
         if (follower == null) return;
         Pose here = follower.pose();
-        follower.follow(Paths.line(here, to).linear(here, to));
+        // linear(to, to) holds the target heading for the whole move. The live
+        // heading is never exactly the preset's, so linear(here, to) gave a
+        // moving setpoint, which this drivetrain oscillates on.
+        follower.follow(Paths.line(here, to).linear(to, to));
         // Macros and ball seek are mutually exclusive: both own
         seeking = false;
         autoTarget = name;

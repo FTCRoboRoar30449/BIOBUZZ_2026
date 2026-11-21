@@ -31,6 +31,7 @@ public class TestBase_3_CircleFixed extends Auto_Base {
             new Step(cv(TestGeom.CIR_N, TestGeom.C_NW, TestGeom.CIR_W), MechState.IDLE, null),
             new Step(cv(TestGeom.CIR_W, TestGeom.C_SW, TestGeom.CIR_S), MechState.IDLE, null),
             new Step(cv(TestGeom.CIR_S, TestGeom.C_SE, TestGeom.CIR_E), MechState.IDLE, null),
+            new Step(ln(TestGeom.CIR_E, TestGeom.CENTER), MechState.IDLE, null),   // return
         };
     }
 }

@@ -1171,7 +1171,8 @@ public class RobotSetup extends LinearOpMode {
     private String hint(Step s) {
         switch (s) {
             case DEVICES:        return "everything resolved, or init would have failed";
-            case DIRECTION:      return "A=fwd  B=rev  X=stop  Y=flip   (MOVES MOTORS)";
+            case DIRECTION:      return "A=fwd B=rev X=stop Y=flip | LB/RB power +-0.10,"
+                                      + " triggers +-0.02   (MOVES MOTORS)";
             case SERVO_LIMITS:   return "A=LOW  B=HIGH  X=clear  Y=mark (turret: Y=home)";
             case HOME:           return "dpad U/D pick row  A=home  X=abort  Y=flip side";
             case PWM_CHECK:      return "dpad U/D row  A/B sweep ends  X=halt/centre  Y=breakaway";
@@ -1413,8 +1414,13 @@ public class RobotSetup extends LinearOpMode {
                             dirOpen[i] ? "open" : "closed"));
         }
         telemetry.addLine("");
-        telemetry.addData("power", "%.2f  %s", dirPower,
+        telemetry.addData("power", "%.2f  %s   [LB/RB 0.10, triggers 0.02, 0.05..1.00]",
+                dirPower,
                 dirOpen[dirIdx()] ? "= duty cycle" : "= fraction of max SPEED");
+        if (dirOpen[dirIdx()] && dirPower < DIR_OPEN_LOOP_MIN_POWER) {
+            telemetry.addData("note", "open loop floors at %.2f, so %.2f will not move it",
+                    DIR_OPEN_LOOP_MIN_POWER, dirPower);
+        }
         telemetry.addData("encoder delta", dirMotor().getCurrentPosition() - dirZero);
         if (dirIdx() == 0) {
             telemetry.addLine("  intakeMot's port reads the TURRET encoder, so");
