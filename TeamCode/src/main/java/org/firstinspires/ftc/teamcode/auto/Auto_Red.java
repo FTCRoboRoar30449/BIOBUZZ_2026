@@ -17,9 +17,13 @@ public class Auto_Red extends Auto_Base {
 
     @Override
     protected Step[] buildSteps() {
-        Path toGarden = curve(Red.START, Red.C_START_GARDEN, Red.GARDEN_SWEEP);
+        Path toTurn   = leg(Red.START, Red.GARDEN_TURN);
+        Path toVia    = leg(Red.GARDEN_TURN, Red.GARDEN_VIA);
+        Path toGarden = leg(Red.GARDEN_VIA, Red.GARDEN_SWEEP);
         return new Step[] {
-            new Step(toGarden, MechState.INTAKE_FIELD, null),
+            new Step(toTurn, MechState.INTAKE_FIELD, null),
+            new Step(toVia, null, null),
+            new Step(toGarden, null, null),
             // Drive to balls that are actually there, not to where balls
             sweep(),
             // driveTo, not a baked curve: the sweep ended wherever the last

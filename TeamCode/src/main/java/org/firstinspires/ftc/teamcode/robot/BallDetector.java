@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 public class BallDetector implements VisionProcessor {
 
@@ -36,6 +37,10 @@ public class BallDetector implements VisionProcessor {
     public static Scalar YELLOW_LO = new Scalar(21, 90, 95);
     public static Scalar YELLOW_HI = new Scalar(37, 255, 255);
     // Red wraps around 0, so it needs two windows.
+    // Only needed if the red ball reads near H 179 as well as near 0. The
+    // one measured 21 Nov sits at H 2-19, so one window covers it.
+    public static boolean RED_WRAP = false;
+    public static double RED_WRAP_FROM = 165;
     public static Scalar RED1_LO = new Scalar(0, 80, 100);
     public static Scalar RED1_HI = new Scalar(10, 255, 255);
     public static Scalar RED2_LO = new Scalar(163, 80, 100);
@@ -188,10 +193,14 @@ public class BallDetector implements VisionProcessor {
                 YELLOW_HI = new Scalar(hHi, 255, 255);
                 break;
             case NECTAR_RED:
-                // Red wraps 0, so the low window anchors at 0 and the high
-                RED1_LO = new Scalar(0, sMin, vMin);
-                RED1_HI = new Scalar(hLo, 255, 255);
-                RED2_LO = new Scalar(hHi, sMin, vMin);
+                // hLo..hHi is ONE window, read like the other two colours.
+                // It used to treat hLo as the TOP of a 0-anchored window and
+                // hHi as the BOTTOM of a 179-anchored one, so the measured
+                // 0..28 became [0,0] plus [28,179]: an empty red band and a
+                // second one matching yellow, green and blue.
+                RED1_LO = new Scalar(hLo, sMin, vMin);
+                RED1_HI = new Scalar(hHi, 255, 255);
+                RED2_LO = new Scalar(RED_WRAP ? RED_WRAP_FROM : 180, sMin, vMin);
                 RED2_HI = new Scalar(179, 255, 255);
                 break;
             case NECTAR_BLUE:
@@ -205,14 +214,30 @@ public class BallDetector implements VisionProcessor {
         switch (t) {
             case POLLEN:      return new double[] { YELLOW_LO.val[0], YELLOW_HI.val[0],
                                                     YELLOW_LO.val[1], YELLOW_LO.val[2] };
-            case NECTAR_RED:  return new double[] { RED1_HI.val[0], RED2_LO.val[0],
+            case NECTAR_RED:  return new double[] { RED1_LO.val[0], RED1_HI.val[0],
                                                     RED1_LO.val[1], RED1_LO.val[2] };
             default:          return new double[] { BLUE_LO.val[0], BLUE_HI.val[0],
                                                     BLUE_LO.val[1], BLUE_LO.val[2] };
         }
     }
 
+    // Why contours died, per colour, for the frame just processed. Without
+    // this "nothing seen" gives no way to tell a colour fault from a shape
+    // one, and the two have opposite fixes.
+    public static final class Reject {
+        public int contours, area, circ, horizon, size, kept;
+        public String line() {
+            return String.format(Locale.US, "%d found: %d area %d circ %d horiz %d size -> %d",
+                    contours, area, circ, horizon, size, kept);
+        }
+    }
+    private final Reject[] rejects = { new Reject(), new Reject(), new Reject() };
+
+    public Reject rejectsFor(BallType t) { return rejects[t.ordinal()]; }
+
     private void collect(Mat binary, BallType type, List<Detection> out) {
+        Reject rj = rejects[type.ordinal()];
+        rj.contours = rj.area = rj.circ = rj.horizon = rj.size = rj.kept = 0;
         // Open then close: kill speckle, then fill the holes in a perforated
         Mat k = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
         Imgproc.morphologyEx(binary, binary, Imgproc.MORPH_OPEN, k);
@@ -222,13 +247,14 @@ public class BallDetector implements VisionProcessor {
         Imgproc.findContours(binary, contours, new Mat(),
                 Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
 
+        rj.contours = contours.size();
         for (MatOfPoint c : contours) {
             double area = Imgproc.contourArea(c);
-            if (area < MIN_AREA_PX || area > MAX_AREA_PX) continue;
+            if (area < MIN_AREA_PX || area > MAX_AREA_PX) { rj.area++; continue; }
             double per = Imgproc.arcLength(new org.opencv.core.MatOfPoint2f(c.toArray()), true);
-            if (per <= 0) continue;
+            if (per <= 0) { rj.circ++; continue; }
             double circ = 4.0 * Math.PI * area / (per * per);
-            if (circ < MIN_CIRCULARITY) continue;
+            if (circ < MIN_CIRCULARITY) { rj.circ++; continue; }
 
             Rect r = Imgproc.boundingRect(c);
             // The ball TOUCHES the floor at the bottom of its silhouette.
@@ -236,7 +262,7 @@ public class BallDetector implements VisionProcessor {
             double v = r.y + r.height;
 
             double[] g = groundPoint(u, v);
-            if (g == null) continue;                  // ray never meets the floor
+            if (g == null) { rj.horizon++; continue; }   // ray never meets the floor
 
             // Predict the blob's size from the range the GEOMETRY gave us
             double diam = diameterIn(type);
@@ -249,8 +275,9 @@ public class BallDetector implements VisionProcessor {
                 double predDpx = fx * diam / slant;
                 double predArea = Math.PI / 4.0 * predDpx * predDpx;
                 double ratio = predArea > 0 ? area / predArea : 0;
-                if (ratio < SIZE_TOL_LO || ratio > SIZE_TOL_HI) continue;
+                if (ratio < SIZE_TOL_LO || ratio > SIZE_TOL_HI) { rj.size++; continue; }
             }
+            rj.kept++;
 
             double range = Math.hypot(g[0], g[1]);
             double bearing = Math.toDegrees(Math.atan2(g[1], g[0]));

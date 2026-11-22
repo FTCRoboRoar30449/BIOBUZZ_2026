@@ -14,10 +14,10 @@ import com.qualcomm.robotcore.hardware.ServoImplEx;
 
 import org.firstinspires.ftc.teamcode.field.Blue;
 import org.firstinspires.ftc.teamcode.field.Red;
+import org.firstinspires.ftc.teamcode.field.ShooterRed;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
-import org.firstinspires.ftc.teamcode.field.ShooterRed;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -293,10 +293,12 @@ public class RobotSetup extends LinearOpMode {
     private void csRecord() {
         ShooterAdapter.Shot s = csShot();
         if (!s.valid) { note = "nothing to record -- no solution"; return; }
-        csRows.add(String.format(Locale.US, "%s,%s,%.1f,%.1f,%.0f,%.3f,%+.1f,%d,%d",
+        csRows.add(String.format(Locale.US, "%s,%s,%.1f,%.1f,%+.1f,%.0f,%.3f,%+.1f,%d,%d",
                 csBall == 0 ? "POLLEN" : "NECTAR",
                 CS_NAMES[csPreset],
-                s.rangeIn, s.hoodDeg, s.rpm,
+                s.rangeIn, s.hoodDeg,
+                csBall == 0 ? ShooterRed.HOOD_TRIM_POLLEN : ShooterRed.HOOD_TRIM_NECTAR,
+                s.rpm,
                 csBall == 0 ? RobotHardware.SHOOTER_EFF_POLLEN
                             : RobotHardware.SHOOTER_EFF_NECTAR,
                 csMiss, csLastFeedMs, Math.round(csMotor().getVelocity())));
@@ -353,24 +355,25 @@ public class RobotSetup extends LinearOpMode {
         if (step != Step.CELLSHOT) { csFeed(false); return; }
         // Y is read here, held, rather than on its rising edge.
         csFeed(csLive && gamepad1.y);
-        if (!csLive) return;
         ShooterAdapter.Shot s = csShot();
         if (!s.valid) {
-            csStop();
-            note = "lost the solution -- change heading or preset";
+            if (csLive) { csStop(); note = "lost the solution -- change the stand"; }
             return;
         }
-        // Re-applied every loop, so turning the EFF knob re-aims live.
+        // Hood and turret follow the knobs the moment you turn them, whether
+        // or not the flywheel is running. Only the wheel waits for A -- every
+        // other step on this tool drives its servo as soon as you jog it, and
+        // a trim that moves nothing until you spin up reads as a dead knob.
         if (csBall == 0) {
             robot.hoodPollen.setPosition(clamp01(HoodMap.pollenPos(s.hoodDeg)));
         } else {
             robot.hoodNectar.setPosition(clamp01(HoodMap.nectarPos(s.hoodDeg)));
         }
-        csMotor().setVelocity(RobotHardware.rpmToTicksPerSec(s.rpm));
         if (!homing) {
             turret.setTurretDeg(s.turretDeg);
             turret.update();
         }
+        if (csLive) csMotor().setVelocity(RobotHardware.rpmToTicksPerSec(s.rpm));
     }
 
     private void drawCellShot() {
@@ -392,9 +395,18 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addLine("NO SOLUTION for this ball from here.");
             telemetry.addLine("Needs 15-39 in of range at 89% or better.");
         } else {
+            double trim = csBall == 0 ? ShooterRed.HOOD_TRIM_POLLEN
+                                      : ShooterRed.HOOD_TRIM_NECTAR;
+            boolean clamped = s.hoodDeg >= HoodMap.HOOD_MAX_DEG - 0.01
+                           || s.hoodDeg <= HoodMap.HOOD_MIN_DEG + 0.01;
             telemetry.addLine(String.format(Locale.US,
-                    "range %.1f in   hood %.0f deg   %.0f rpm   %.0f%%",
-                    s.rangeIn, s.hoodDeg, s.rpm, s.confidencePct));
+                    "range %.1f in   hood %.1f (trim %+.1f)%s   %.0f rpm   %.0f%%",
+                    s.rangeIn, s.hoodDeg, trim, clamped ? " CLAMPED" : "",
+                    s.rpm, s.confidencePct));
+            telemetry.addLine(String.format(Locale.US, "hood servo %.4f   %s",
+                    csBall == 0 ? HoodMap.pollenPos(s.hoodDeg)
+                                : HoodMap.nectarPos(s.hoodDeg),
+                    csLive ? "flywheel SPINNING" : "hood live, flywheel off"));
             telemetry.addLine(String.format(Locale.US,
                     "turret want %+.1f  have %+.1f%s",
                     s.turretDeg, turret.getMeasuredDeg(),
@@ -601,12 +613,13 @@ public class RobotSetup extends LinearOpMode {
                         () -> csBall, v -> csBall = (int) v),
                 new Knob("here", "miss (+long)", "%+.1f in", 1.0, 0.5, -24, 24,
                         () -> csMiss, v -> csMiss = v),
-                new Knob("ShooterRed", "HOOD_TRIM_POLLEN", "%+.1f deg", 1.0, 0.5, -20, 20,
-                        () -> ShooterRed.HOOD_TRIM_POLLEN,
-                        v -> ShooterRed.HOOD_TRIM_POLLEN = v),
-                new Knob("ShooterRed", "HOOD_TRIM_NECTAR", "%+.1f deg", 1.0, 0.5, -20, 20,
-                        () -> ShooterRed.HOOD_TRIM_NECTAR,
-                        v -> ShooterRed.HOOD_TRIM_NECTAR = v),
+                // One row, not two: a POLLEN trim while NECTAR is selected
+                // moves nothing, which reads as a broken knob.
+                new Knob("ShooterRed", "hood trim (this ball)", "%+.1f deg", 1.0, 0.5, -20, 20,
+                        () -> csBall == 0 ? ShooterRed.HOOD_TRIM_POLLEN
+                                          : ShooterRed.HOOD_TRIM_NECTAR,
+                        v -> { if (csBall == 0) ShooterRed.HOOD_TRIM_POLLEN = v;
+                               else ShooterRed.HOOD_TRIM_NECTAR = v; }),
                 new Knob("RobotHardware", "SHOOTER_EFF_POLLEN", "%.3f", 0.005, 0.001, 0.20, 0.60,
                         () -> RobotHardware.SHOOTER_EFF_POLLEN,
                         v -> RobotHardware.SHOOTER_EFF_POLLEN = v),
@@ -2433,6 +2446,10 @@ public class RobotSetup extends LinearOpMode {
         }
         telemetry.addData("seen", "pollen %d   red %d   blue %d%s", p, r, b,
                 BallDetector.SIZE_CHECK ? "" : "   [size chk OFF]");
+        telemetry.addLine("died (found: area circ horiz size -> kept)");
+        for (BallDetector.BallType bt : BallDetector.BallType.values()) {
+            telemetry.addLine("  " + bt + " " + bd.rejectsFor(bt).line());
+        }
         if (ds.isEmpty() && BallDetector.SIZE_CHECK) {
             telemetry.addLine("nothing seen -- if the ball is in your HAND");
             telemetry.addLine("press A, the size check assumes it is on the floor");
@@ -2649,7 +2666,7 @@ public class RobotSetup extends LinearOpMode {
         out.add(String.format(Locale.US, "HOOD_TRIM_POLLEN = %.1f;  HOOD_TRIM_NECTAR = %.1f;",
                 ShooterRed.HOOD_TRIM_POLLEN, ShooterRed.HOOD_TRIM_NECTAR));
         if (!csRows.isEmpty()) {
-            out.add("// ball,stand,range,hood,rpm,eff,miss,feed_ms,ticks_s");
+            out.add("// ball,stand,range,hood,trim,rpm,eff,miss,feed_ms,ticks_s");
             out.addAll(csRows);
         }
         out.add(String.format(Locale.US, "SHOOTER_EFF_POLLEN = %.3f;",

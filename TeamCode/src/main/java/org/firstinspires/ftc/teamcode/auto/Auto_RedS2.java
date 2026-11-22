@@ -18,9 +18,11 @@ public class Auto_RedS2 extends Auto_Base {
     protected Step[] buildSteps() {
         return new Step[] {
             shootLeg(Red.START_FAR, Red.SHOOT_MID),
-            new Step(leg(Red.SHOOT_MID, Red.GARDEN_FAR), MechState.INTAKE_FIELD, null),
+            new Step(leg(Red.SHOOT_MID, Red.GARDEN_VIA_FAR), MechState.INTAKE_FIELD, null),
+            new Step(leg(Red.GARDEN_VIA_FAR, Red.GARDEN_FAR), null, null),
             sweep(),
             // The sweep ended at the last ball, not at GARDEN_FAR.
+            driveTo(Red.GARDEN_VIA_FAR, null, null),
             shootTo(Red.SHOOT_MID),
             new Step(leg(Red.SHOOT_MID, Red.FLOWER_FAR), MechState.INTAKE_FLOWER, null),
             shootLeg(Red.FLOWER_FAR, Red.SHOOT_MID),

@@ -75,8 +75,15 @@ public class RobotHardware {
     // Nectar is trustworthy: rms 2.7 in across six hood angles.
     // Pollen is NOT: rms 6.4 in, and the error grows toward mid-hood, which
     // points at the replaced pollen hood's degree map. Re-measure it.
-    public static double SHOOTER_EFF_NECTAR = 0.429;
-    public static double SHOOTER_EFF_POLLEN = 0.360;   // PROVISIONAL
+    // MEASURED 22 Nov, step 29, four stands. Nectar barely moved across the
+    // whole range (0.429-0.434), so the nectar speed table is sound.
+    public static double SHOOTER_EFF_NECTAR = 0.432;
+    // MEASURED 22 Nov. 0.360 was badly wrong -- the real figure is ~29%
+    // higher, so every pollen shot was being over-sped. Tuned at 24-28 in,
+    // where it wants 0.465-0.470. At 36 in it wants 0.445, so the pollen
+    // speed table rises too slowly with range; one constant cannot serve
+    // both ends and this one favours the short end, where the robot hits.
+    public static double SHOOTER_EFF_POLLEN = 0.465;
 
     public static double shooterEfficiency(boolean nectar) {
         return nectar ? SHOOTER_EFF_NECTAR : SHOOTER_EFF_POLLEN;

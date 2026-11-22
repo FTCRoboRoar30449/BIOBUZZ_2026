@@ -17,7 +17,8 @@ public class Auto_RedS1 extends Auto_Base {
     protected Step[] buildSteps() {
         return new Step[] {
             shootLeg(Red.START, Red.SHOOT_NEAR),
-            new Step(leg(Red.SHOOT_NEAR, Red.GARDEN_APPROACH), null),
+            new Step(leg(Red.SHOOT_NEAR, Red.GARDEN_VIA), null),
+            new Step(leg(Red.GARDEN_VIA, Red.GARDEN_APPROACH), null),
             new Step(leg(Red.GARDEN_APPROACH, Red.GARDEN), MechState.INTAKE_FIELD, null),
             shootCurve(Red.GARDEN, Red.C_GARDEN_SHOOT, Red.SHOOT_MID),
             new Step(leg(Red.SHOOT_MID, Red.PARK), MechState.IDLE),

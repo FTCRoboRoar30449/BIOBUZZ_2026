@@ -56,13 +56,22 @@ public final class ShooterBlue {
     // ---- Limelight 3A, turret-mounted ------------------------------------
 
     // ---- tables, one entry per inch of range from 15 in -------------------
+    // RESHAPED 22 Nov from the measured CSV. The old table was a flat 80/75/70
+    // and needed a hood trim that swung from -2 at 24 in to -8 at 36 in; that
+    // slope is now in the table itself, so one trim of zero works everywhere.
+    // Fitted trim(range) = 13.484 - 0.5795*range over the four measured
+    // stands, clamped to the measured span so the ends are not extrapolated.
     private static final double[] POLLEN_HOOD = {
-            80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 75, 75, 75,
-            75, 75, 70, 70, 70, 70, 70, 70, 70, 70, 70, 70 };
+            80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 74, 73, 73,
+            72, 72, 66, 66, 65, 64, 64, 63, 63, 62, 61, 61 };
+    // Rescaled so SHOOTER_EFF_POLLEN = 0.465 reproduces the rpm actually
+    // fired at every measured range, within 0.4%. Before this the efficiency
+    // had to be walked from 0.470 at 24 in to 0.445 at 36 in, which is the
+    // table's shape being wrong, not the constant.
     private static final double[] POLLEN_V = {
-            4.950, 4.925, 4.950, 4.975, 5.025, 5.075, 5.125, 5.225, 5.275,
-            5.000, 5.025, 5.050, 5.075, 5.100, 5.125, 5.100, 5.100, 5.150,
-            5.150, 5.150, 5.175, 5.200, 5.200, 5.250, 5.250 };
+            4.712, 4.708, 4.752, 4.796, 4.865, 4.935, 5.005, 5.124, 5.196,
+            4.947, 4.993, 5.040, 5.088, 5.135, 5.184, 5.182, 5.205, 5.280,
+            5.304, 5.328, 5.379, 5.429, 5.455, 5.533, 5.559 };
     private static final double[] POLLEN_MAKE = {
             81.1, 83.0, 87.9, 89.2, 92.5, 93.3, 94.2, 91.6, 87.9, 92.9, 94.9, 92.8,
             95.0, 92.7, 94.9, 92.7, 92.7, 92.5, 92.5, 92.5, 94.7, 92.2, 92.2, 91.9, 91.9 };

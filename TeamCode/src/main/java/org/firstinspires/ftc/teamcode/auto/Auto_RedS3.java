@@ -17,12 +17,16 @@ public class Auto_RedS3 extends Auto_Base {
     protected Step[] buildSteps() {
         return new Step[] {
             shootLeg(Red.START, Red.SHOOT_NEAR),
-            new Step(leg(Red.SHOOT_NEAR, Red.GARDEN), MechState.INTAKE_FIELD, null),
+            new Step(leg(Red.SHOOT_NEAR, Red.GARDEN_VIA), MechState.INTAKE_FIELD, null),
+            new Step(leg(Red.GARDEN_VIA, Red.GARDEN), null, null),
             sweep(),
             // shootTo, not shootLeg: the sweep ended at the last ball
+            driveTo(Red.GARDEN_VIA, null, null),
             shootTo(Red.SHOOT_NEAR),
-            new Step(leg(Red.SHOOT_NEAR, Red.FLOWER_NEAR), MechState.INTAKE_FLOWER, null),
-            shootLeg(Red.FLOWER_NEAR, Red.SHOOT_NEAR),
+            new Step(leg(Red.SHOOT_NEAR, Red.FLOWER_NEAR_TURN), MechState.INTAKE_FLOWER, null),
+            new Step(leg(Red.FLOWER_NEAR_TURN, Red.FLOWER_NEAR), null, null),
+            new Step(leg(Red.FLOWER_NEAR, Red.FLOWER_NEAR_TURN), null, null),
+            shootLeg(Red.FLOWER_NEAR_TURN, Red.SHOOT_NEAR),
             new Step(curve(Red.SHOOT_NEAR, Red.C_SHOOT_PARK, Red.PARK), MechState.IDLE),
         };
     }

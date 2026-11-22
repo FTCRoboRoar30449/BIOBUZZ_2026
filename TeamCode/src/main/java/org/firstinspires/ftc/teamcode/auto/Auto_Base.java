@@ -83,6 +83,15 @@ public abstract class Auto_Base extends OpMode {
         return Paths.line(a, b).linear(b, b);
     }
 
+    // What is in the robot at start, on every route. Four pollen fills the
+    // magazine -- the counts clamp at 4 total, so there is no room for nectar
+    // alongside them. Override the two methods on a route that starts empty.
+    public static int PRELOAD_POLLEN = 4;
+    public static int PRELOAD_NECTAR = 0;
+
+    protected int preloadPollen() { return PRELOAD_POLLEN; }
+    protected int preloadNectar() { return PRELOAD_NECTAR; }
+
     // Give up waiting rather than hang the whole route.
     public static double MECH_WAIT_MAX_S = 5.0;
     private long mechWaitStart = 0;
@@ -167,6 +176,11 @@ public abstract class Auto_Base extends OpMode {
         vision.startHiveAprilTagPipeline();
         mech.setState(MechState.START);
         mech.initPositions();
+        // Both counts default to 0, and a volley counts down from them, so a
+        // route that shoots a hand-loaded preload fires nothing unless it
+        // says what is aboard. Routes that start empty leave this at 0.
+        mech.countPollen = preloadPollen();
+        mech.countNectar = preloadNectar();
         turret.beginHoming();
 
         // create() builds a real Follower as of 14 Nov.
