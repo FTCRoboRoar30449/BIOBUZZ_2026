@@ -38,7 +38,7 @@ public class Auto_Blue_SpEp extends OpMode {
     private PathState pathState;
 
     private final Pose startPose = new Pose(88,12,Math.toRadians(90));
-    private final Pose shootHive = new Pose(83.68,103.34,Math.toRadians(90));
+    private final Pose shootHive = new Pose(84.03,37.6,Math.toRadians(90));
     private final Pose endPoint = new Pose(132,97, Math.toRadians(80.7));
 
 
