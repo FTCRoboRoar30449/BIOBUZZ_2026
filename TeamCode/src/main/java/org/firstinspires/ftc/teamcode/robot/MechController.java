@@ -754,13 +754,26 @@ public class MechController {
                 return;
             }
             lastPlan = plan;
-            turretDeg = (plan.mode == ShooterAdapter.FireMode.SIMULTANEOUS)
-                    ? plan.sharedTurretDeg : plan.pollen.turretDeg;
-            hoodDeg = plan.pollen.hoodDeg;
-            rpm = plan.pollen.rpm;
+
+            // With no pollen left, aim and spin for NECTAR instead of
+            // refusing to fire. The old code always aimed the pollen
+            // solution, so a nectar-only robot held fire at any angle that
+            // was not simultaneous.
+            nectarOnly = countPollen <= 0 && countNectar > 0;
+
+            if (nectarOnly) {
+                turretDeg = plan.nectar.turretDeg;
+                hoodDeg = plan.nectar.hoodDeg;
+                rpm = plan.nectar.rpm;
+            } else {
+                turretDeg = (plan.mode == ShooterAdapter.FireMode.SIMULTANEOUS)
+                        ? plan.sharedTurretDeg : plan.pollen.turretDeg;
+                hoodDeg = plan.pollen.hoodDeg;
+                rpm = plan.pollen.rpm;
+            }
 
             streamNectar = plan.mode == ShooterAdapter.FireMode.SIMULTANEOUS
-                    && countNectar > 0;
+                    && countNectar > 0 && !nectarOnly;
             if (streamNectar) {
                 robot.hoodNectar.setPosition(HoodMap.nectarPos(plan.nectar.hoodDeg));
                 targetNectarTps = RobotHardware.rpmToTicksPerSec(plan.nectar.rpm);
@@ -775,27 +788,29 @@ public class MechController {
             rpm = FLOWER_POLLEN_RPM;
         }
 
-        // Hold the aim and the speed.
+        // Hold the aim and the speed, on whichever barrel is firing.
         turret.setTurretDeg(turretDeg);
-        robot.hoodPollen.setPosition(HoodMap.pollenPos(hoodDeg));
-        targetPollenTps = RobotHardware.rpmToTicksPerSec(rpm);
-        robot.pollenShootingMot.setVelocity(targetPollenTps);
+        if (nectarOnly) {
+            robot.hoodNectar.setPosition(HoodMap.nectarPos(hoodDeg));
+            targetNectarTps = RobotHardware.rpmToTicksPerSec(rpm);
+            robot.nectarShootingMot.setVelocity(targetNectarTps);
+        } else {
+            robot.hoodPollen.setPosition(HoodMap.pollenPos(hoodDeg));
+            targetPollenTps = RobotHardware.rpmToTicksPerSec(rpm);
+            robot.pollenShootingMot.setVelocity(targetPollenTps);
+        }
         operationStatus = OperationStatus.RUNNING;
 
-        if (countPollen <= 0 && !streamNectar) {
-            shotNote = "holding fire: nectar only, and this angle needs a "
-                     + "separate nectar volley";
-            haltFlow();
-            return;
-        }
-
-        conveyorPollen(1);
-        conveyorNectar(streamNectar ? 1 : 0);
+        // Only the barrel that is firing opens.
+        conveyorPollen(nectarOnly ? 0 : 1);
+        conveyorNectar((streamNectar || nectarOnly) ? 1 : 0);
 
         // BOTH wheels must be up when both are streaming -- feeding a nectar
         boolean ready = turret.isSettled()
-                && shooterAtSpeed(BallToShoot.POLLEN)
-                && (!streamNectar || shooterAtSpeed(BallToShoot.NECTAR));
+                && (nectarOnly
+                        ? shooterAtSpeed(BallToShoot.NECTAR)
+                        : shooterAtSpeed(BallToShoot.POLLEN)
+                          && (!streamNectar || shooterAtSpeed(BallToShoot.NECTAR)));
         if (ready) {
             // An index was mid-stroke and is being taken over.
             if (activeConveyor != ConveyorType.NONE) flowAnchorValid = false;
@@ -827,7 +842,9 @@ public class MechController {
     private void countFlowByBeltTravel(boolean hive) {
         if (COUNT_FLOW_BY_DIP) { countFlowByDip(hive); return; }
 
-        int perBall = streamNectar ? TICKS_TO_SHOOT_BOTH : TICKS_TO_SHOOT_POLLEN;
+        int perBall = streamNectar ? TICKS_TO_SHOOT_BOTH
+                    : nectarOnly   ? TICKS_TO_SHOOT_NECTAR
+                                   : TICKS_TO_SHOOT_POLLEN;
         if (perBall <= 0) return;
 
         // Signed, and only forward travel counts.
@@ -835,13 +852,14 @@ public class MechController {
         while (travelled >= perBall) {
             flowAnchorTicks += perBall;
             travelled -= perBall;
-            if (countPollen > 0) {
+            // The pollen bed is shut when nectar is firing alone.
+            if (!nectarOnly && countPollen > 0) {
                 countPollen--;
                 shotsCompleted++;
                 if (hive) cellPollenIn++;
             }
             // Nectar only while its bed is up -- a disengaged bed cannot have
-            if (streamNectar && countNectar > 0) {
+            if ((streamNectar || nectarOnly) && countNectar > 0) {
                 countNectar--;
                 shotsCompleted++;
                 if (hive) cellNectarIn++;
@@ -875,9 +893,11 @@ public class MechController {
         }
     }
 
+    private boolean nectarOnly = false;
     private boolean streamNectar = false;
 
     private void haltFlow() {
+        nectarOnly = false;
         syncExitBaseline();
         // End of the session, so the partial travel goes with it.
         flowAnchorValid = false;

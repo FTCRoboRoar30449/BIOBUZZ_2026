@@ -213,7 +213,7 @@ public final class ShooterAdapter {
     public static double turretDegToPoint(double x, double y, double yawDeg,
                                           double targetX, double targetY) {
         double bearing = Math.toDegrees(Math.atan2(targetY - y, targetX - x));
-        return wrap180(yawDeg - bearing);
+        return wrap180(ShooterRed.AIM_SIGN * (yawDeg - bearing));
     }
 
     public static double wrap180(double deg) {

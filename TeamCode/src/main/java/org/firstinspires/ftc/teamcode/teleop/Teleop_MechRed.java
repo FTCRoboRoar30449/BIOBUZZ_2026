@@ -36,7 +36,7 @@ public class Teleop_MechRed extends OpMode {
     private ShooterAdapter shooter;
     private TurretController turret;
 
-    private boolean p1a, p1du, p1dd, p1dl;
+    private boolean p1a, p1b, p1du, p1dd, p1dl;
     private boolean p2a, p2x, p2b, p2y, p2du, p2dd, p2dl, p2dr;
     private boolean p2lb, p2rb, p2bk, p2st, p2lt, p2rt, p2lsb;
 
@@ -123,8 +123,12 @@ public class Teleop_MechRed extends OpMode {
         // A parks. Worth 5 points, and the end of a match is exactly when you
         // do not want to be lining up by hand. Stick cancels it like any macro.
         boolean a1 = gamepad1.a && !p1a;
+        boolean b1 = gamepad1.b && !p1b;
         if (a1) driveToPose(Red.PARK, "PARK");
-        p1a = gamepad1.a;
+        // You only drive to the GARDEN to collect, so arm the intake too,
+        // same as RB and as gamepad 2's flower button.
+        if (b1) { driveToPose(Red.GARDEN, "GARDEN"); mech.setState(MechState.INTAKE_FIELD); }
+        p1a = gamepad1.a; p1b = gamepad1.b;
 
         // Partner cell scoring.
         boolean du1 = gamepad1.dpad_up && !p1du;
@@ -267,6 +271,10 @@ public class Teleop_MechRed extends OpMode {
     private long lastSeekMs = 0;
     private int seekIssues = 0;
     private boolean lastSticks = false;
+    // follow() is issued from the gamepad block, before update() has run on
+    // it, so isBusy() means nothing for the first few loops.
+    public static long MACRO_SETTLE_MS = 400;
+    private long autoTargetMs = 0;
 
     private void serviceDrive() {
         if (follower == null) return;
@@ -295,7 +303,12 @@ public class Teleop_MechRed extends OpMode {
         }
 
         // A macro that has arrived releases itself, so the driver gets
-        if (autoTarget != null && !follower.isBusy()) autoTarget = null;
+        // control back.
+        if (autoTarget != null
+                && System.currentTimeMillis() - autoTargetMs > MACRO_SETTLE_MS
+                && !follower.isBusy()) {
+            autoTarget = null;
+        }
 
         boolean rb = gamepad1.right_bumper;
         // Pressing RB means "go get that ball", so it also commands
@@ -315,7 +328,10 @@ public class Teleop_MechRed extends OpMode {
             seeking = false;
         }
 
-        if (!seeking) {
+        // Both flags, not one. Dropping autoTarget from this test is what
+        // killed every macro: manual() then ran on the same loops follow()
+        // was meant to own, and the last command wins.
+        if (autoTarget == null && !seeking) {
             // Held, not toggled: a precision mode you can leave switched
             double scale = gamepad1.left_trigger > 0.5 ? PRECISION_SCALE : 1.0;
             follower.manual(ly * scale, lx * scale, rx * scale);
@@ -334,6 +350,7 @@ public class Teleop_MechRed extends OpMode {
         follower.follow(Paths.line(here, to).linear(to, to));
         seeking = false;
         autoTarget = name;
+        autoTargetMs = System.currentTimeMillis();
     }
 
     // Three per CELL; pick by which CELL is raised, then by distance.
@@ -421,8 +438,8 @@ public class Teleop_MechRed extends OpMode {
         seekIssues++;
         follower.follow(Paths.line(here, to).linear(here, to));
         seeking = true;
-        // Latched the loop AFTER the follow, so it survives releasing RB and
-        // says whether the follower ever accepted the path.
+        // Latched after the follow, so it survives releasing RB and says
+        // whether the follower ever accepted the path.
         seekWhy = String.format(Locale.US,
                 "drive %.0f in to %s  #%d  busyAfterFollow=%s",
                 move, d.type, seekIssues, follower.isBusy());

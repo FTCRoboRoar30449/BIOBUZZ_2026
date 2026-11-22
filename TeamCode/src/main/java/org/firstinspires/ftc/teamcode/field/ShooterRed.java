@@ -89,6 +89,14 @@ public final class ShooterRed {
 
     public static double MIN_CONFIDENCE_PCT = 89.0;
 
+    // Which way round the turret command runs. TurretController calls POSITIVE
+    // degrees LEFT (see ENCODER_SIGN), and the geometry below produces
+    // yaw - bearing, which is positive when the target is to the RIGHT.
+    // Measured 21 Nov at AUD_MID: both balls went left of the cell, nectar by
+    // far more than pollen -- the signature of an inverted sign, since nectar's
+    // commanded angle is four times pollen's.
+    public static int AIM_SIGN = -1;
+
     public static final class Shot {
         public final boolean valid;
         public final double turretDeg;
@@ -133,7 +141,8 @@ public final class ShooterRed {
         final double eff = RobotHardware.shooterEfficiency(ball == Ball.NECTAR);
         final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * eff);
         final double bearingDeg = Math.toDegrees(bearing);
-        return new Shot(true, wrap180(robotYawDeg - bearingDeg), hood, rpm, range, bearingDeg, conf);
+        return new Shot(true, wrap180(AIM_SIGN * (robotYawDeg - bearingDeg)),
+                hood, rpm, range, bearingDeg, conf);
     }
 
     public static double[] sidewaysYawDeg(Target tgt, double x, double y) {
@@ -186,7 +195,7 @@ public final class ShooterRed {
         Shot p = solve(Ball.POLLEN, tgt, x, y, robotYawDeg);
         Shot n = solve(Ball.NECTAR, tgt, x, y, robotYawDeg);
         if (!p.valid || !n.valid) return Double.NaN;
-        return wrap180(robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg));
+        return wrap180(AIM_SIGN * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg)));
     }
 
     // ---- firing modes ----------------------------------------------------
@@ -277,7 +286,7 @@ public final class ShooterRed {
         double psi = Math.toRadians(robotYawDeg);
         double cx = x - RobotHardware.LIMELIGHT_BACK_IN * Math.cos(psi);
         double cy = y - RobotHardware.LIMELIGHT_BACK_IN * Math.sin(psi);
-        double bore = robotYawDeg - turretDeg;
+        double bore = robotYawDeg - AIM_SIGN * turretDeg;
         double toTag = Math.toDegrees(Math.atan2(tagY(tgt) - cy, tagX(tgt) - cx));
         return wrap180(toTag - bore);
     }

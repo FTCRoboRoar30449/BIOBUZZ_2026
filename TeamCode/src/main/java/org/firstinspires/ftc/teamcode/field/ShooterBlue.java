@@ -129,7 +129,8 @@ public final class ShooterBlue {
         final double eff = RobotHardware.shooterEfficiency(ball == Ball.NECTAR);
         final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * eff);
         final double bearingDeg = Math.toDegrees(bearing);
-        return new Shot(true, wrap180(robotYawDeg - bearingDeg), hood, rpm, range, bearingDeg, conf);
+        return new Shot(true, wrap180(ShooterRed.AIM_SIGN * (robotYawDeg - bearingDeg)),
+                hood, rpm, range, bearingDeg, conf);
     }
 
     public static double[] sidewaysYawDeg(Target tgt, double x, double y) {
@@ -182,7 +183,8 @@ public final class ShooterBlue {
         Shot p = solve(Ball.POLLEN, tgt, x, y, robotYawDeg);
         Shot n = solve(Ball.NECTAR, tgt, x, y, robotYawDeg);
         if (!p.valid || !n.valid) return Double.NaN;
-        return wrap180(robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg));
+        return wrap180(ShooterRed.AIM_SIGN
+                * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg)));
     }
 
     // ---- firing modes ----------------------------------------------------
@@ -273,7 +275,7 @@ public final class ShooterBlue {
         double psi = Math.toRadians(robotYawDeg);
         double cx = x - RobotHardware.LIMELIGHT_BACK_IN * Math.cos(psi);
         double cy = y - RobotHardware.LIMELIGHT_BACK_IN * Math.sin(psi);
-        double bore = robotYawDeg - turretDeg;
+        double bore = robotYawDeg - ShooterRed.AIM_SIGN * turretDeg;
         double toTag = Math.toDegrees(Math.atan2(tagY(tgt) - cy, tagX(tgt) - cx));
         return wrap180(toTag - bore);
     }

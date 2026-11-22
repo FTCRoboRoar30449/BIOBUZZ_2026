@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.robot;
 
+import com.pedropathing.math.Pose;
 import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
@@ -11,8 +12,12 @@ import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoImplEx;
 
+import org.firstinspires.ftc.teamcode.field.Blue;
+import org.firstinspires.ftc.teamcode.field.Red;
+
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.field.ShooterRed;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,8 +66,9 @@ public class RobotSetup extends LinearOpMode {
         RANGE,          // 26  flower approach bands
         FIRE,           // 27  fire gates
         FLOWERSHOT,     // 28  flower setpoints
+        CELLSHOT,       // 29  fire at a real CELL, set SHOOTER_EFF_*
 
-        DUMP            // 29  paste-ready output
+        DUMP            // 30  paste-ready output
     }
 
     // Which block a step belongs to, shown in the header so you always know
@@ -75,7 +81,7 @@ public class RobotSetup extends LinearOpMode {
                 return "MECH";
             case COLOR: case BALLS: case LIMELIGHT: case PINPOINT:
                 return "SENSE";
-            case RANGE: case FIRE: case FLOWERSHOT:
+            case RANGE: case FIRE: case FLOWERSHOT: case CELLSHOT:
                 return "GATES";
             case DUMP:
                 return "DUMP";
@@ -216,6 +222,155 @@ public class RobotSetup extends LinearOpMode {
     private static double turretPosMax() {
         return TurretController.SERVO_AT_ZERO
                 + TurretController.TURRET_LIMIT_DEG / TurretController.TURRET_TRAVEL_DEG;
+    }
+
+    // ---- CELLSHOT ----------------------------------------------------------
+    // Hand-place the robot on the preset and fire at the real cell. The pose
+    // is a number you select, not odometry, so nothing has to be seeded. The
+    // turret covers the bearing, which is why the heading does not have to be
+    // the match preset's -- 90 and 270 are what a tape measure can set.
+    private int csPreset = 0;        // 0 = AUD_MID, 1 = SCO_MID
+    private int csAlliance = 0;      // 0 = RED, 1 = BLUE
+    private int csBall = 0;          // 0 = POLLEN, 1 = NECTAR
+    private double csYaw = 90.0;
+    private boolean csLive = false;
+    private boolean csFeeding = false;
+    private long csFeedMs = 0;
+    private ShooterAdapter csShooter = null;
+    private int csShooterFor = -1;
+    private static final double[] CS_DEFAULT_YAW = { 90.0, 270.0 };
+
+    private ShooterAdapter csShooter() {
+        if (csShooter == null || csShooterFor != csAlliance) {
+            csShooter = new ShooterAdapter(csAlliance == 0
+                    ? ShooterAdapter.Alliance.RED : ShooterAdapter.Alliance.BLUE);
+            csShooterFor = csAlliance;
+        }
+        return csShooter;
+    }
+
+    private Pose csPose() {
+        if (csAlliance == 0) return csPreset == 0 ? Red.SHOOT_AUD_MID : Red.SHOOT_SCO_MID;
+        return csPreset == 0 ? Blue.SHOOT_AUD_MID : Blue.SHOOT_SCO_MID;
+    }
+
+    private ShooterAdapter.Shot csShot() {
+        Pose p = csPose();
+        return csShooter().solve(
+                csBall == 0 ? ShooterAdapter.Ball.POLLEN : ShooterAdapter.Ball.NECTAR,
+                csPreset == 0 ? ShooterAdapter.Target.AUDIENCE_SIDE
+                              : ShooterAdapter.Target.SCORING_SIDE,
+                p.x(), p.y(), csYaw);
+    }
+
+    private DcMotorEx csMotor() {
+        return csBall == 0 ? robot.pollenShootingMot : robot.nectarShootingMot;
+    }
+
+    private void csStart() {
+        ShooterAdapter.Shot s = csShot();
+        if (!s.valid) {
+            note = "no solution: range outside 15-39 in, or under 89%";
+            return;
+        }
+        csMotor().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        csLive = true;
+        note = String.format(Locale.US,
+                "range %.1f in  hood %.0f  %.0f rpm  turret %+.1f", s.rangeIn,
+                s.hoodDeg, s.rpm, s.turretDeg);
+    }
+
+    private void csStop() {
+        csLive = false;
+        csFeed(false);
+        stopShooters();
+    }
+
+    // Held, not pulsed: the belt has to carry the ball the whole way up the
+    // tunnel, and that distance is not reliably a tick count.
+    private void csFeed(boolean on) {
+        if (on == csFeeding) return;
+        csFeeding = on;
+        if (on) {
+            conveyorPollenBed(csBall == 0);
+            conveyorNectarBed(csBall == 1);
+            robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            robot.conveyorMot.setPower(MechController.CONVEYOR_POWER);
+            csFeedMs = System.currentTimeMillis();
+        } else {
+            robot.conveyorMot.setPower(0);
+            conveyorPollenBed(false);
+            conveyorNectarBed(false);
+            if (csFeedMs > 0) {
+                note = String.format(Locale.US,
+                        "belt ran %d ms -- that is your FEED_RUN_MS",
+                        System.currentTimeMillis() - csFeedMs);
+                csFeedMs = 0;
+            }
+        }
+    }
+
+    private void serviceCellShot() {
+        if (step != Step.CELLSHOT) { csFeed(false); return; }
+        // Y is read here, held, rather than on its rising edge.
+        csFeed(csLive && gamepad1.y);
+        if (!csLive) return;
+        ShooterAdapter.Shot s = csShot();
+        if (!s.valid) {
+            csStop();
+            note = "lost the solution -- change heading or preset";
+            return;
+        }
+        // Re-applied every loop, so turning the EFF knob re-aims live.
+        if (csBall == 0) {
+            robot.hoodPollen.setPosition(clamp01(HoodMap.pollenPos(s.hoodDeg)));
+        } else {
+            robot.hoodNectar.setPosition(clamp01(HoodMap.nectarPos(s.hoodDeg)));
+        }
+        csMotor().setVelocity(RobotHardware.rpmToTicksPerSec(s.rpm));
+        if (!homing) {
+            turret.setTurretDeg(s.turretDeg);
+            turret.update();
+        }
+    }
+
+    private void drawCellShot() {
+        Pose p = csPose();
+        ShooterAdapter.Shot s = csShot();
+        telemetry.addLine(String.format(Locale.US, "%s %s -- stand at %.1f, %.1f facing %.0f",
+                csAlliance == 0 ? "RED" : "BLUE",
+                csPreset == 0 ? "AUD_MID" : "SCO_MID", p.x(), p.y(), csYaw));
+        telemetry.addLine("ball: " + (csBall == 0 ? "POLLEN" : "NECTAR"));
+        telemetry.addLine("");
+        if (!s.valid) {
+            telemetry.addLine("NO SOLUTION for this ball from here.");
+            telemetry.addLine("Needs 15-39 in of range at 89% or better.");
+        } else {
+            telemetry.addLine(String.format(Locale.US,
+                    "range %.1f in   hood %.0f deg   %.0f rpm   %.0f%%",
+                    s.rangeIn, s.hoodDeg, s.rpm, s.confidencePct));
+            telemetry.addLine(String.format(Locale.US,
+                    "turret want %+.1f  have %+.1f%s",
+                    s.turretDeg, turret.getMeasuredDeg(),
+                    turret.isSettled() ? "   SETTLED" : ""));
+            double want = RobotHardware.rpmToTicksPerSec(s.rpm);
+            double have = csMotor().getVelocity();
+            telemetry.addLine(String.format(Locale.US,
+                    "flywheel %s   %.0f of %.0f ticks/s   %s",
+                    csLive ? "SPINNING" : "stopped", have, want,
+                    !csLive ? "" : Math.abs(have - want) <= want * 0.02
+                            ? "AT SPEED" : "spinning up"));
+        }
+        telemetry.addLine("belt " + (csFeeding ? "RUNNING (hold Y)" : "stopped"));
+        if (!turret.isHomed()) {
+            telemetry.addLine("");
+            telemetry.addLine("TURRET NOT HOMED -- do step 24 first, the aim is open loop.");
+        }
+        telemetry.addLine("");
+        drawKnobs();
+        telemetry.addLine("");
+        telemetry.addLine("Landed SHORT -> lower that ball's EFF, LONG -> raise it.");
+        telemetry.addLine("Per inch of miss: pollen 0.005, nectar 0.008. Re-fire each nudge.");
     }
 
     // ---- knob abstraction, for the steps that are just numbers -------------
@@ -390,6 +545,26 @@ public class RobotSetup extends LinearOpMode {
                 new Knob("MechController", "FLOWER_AIM_TRIM_DEG", "%.1f deg", 1.0, 0.2, -45, 45,
                         () -> MechController.FLOWER_AIM_TRIM_DEG,
                         v -> MechController.FLOWER_AIM_TRIM_DEG = v),
+            };
+            case CELLSHOT: return new Knob[] {
+                new Knob("here", "preset", "%.0f  (0=AUD_MID 1=SCO_MID)", 1, 1, 0, 1,
+                        () -> csPreset,
+                        v -> { csPreset = (int) v; csYaw = CS_DEFAULT_YAW[csPreset]; }),
+                new Knob("here", "alliance", "%.0f  (0=RED 1=BLUE)", 1, 1, 0, 1,
+                        () -> csAlliance, v -> csAlliance = (int) v),
+                new Knob("here", "ball", "%.0f  (0=POLLEN 1=NECTAR)", 1, 1, 0, 1,
+                        () -> csBall, v -> csBall = (int) v),
+                new Knob("here", "heading", "%.0f deg", 5, 1, 0, 359,
+                        () -> csYaw, v -> csYaw = v),
+                new Knob("ShooterRed", "AIM_SIGN", "%+.0f  (turret L/R)", 2, 2, -1, 1,
+                        () -> ShooterRed.AIM_SIGN,
+                        v -> ShooterRed.AIM_SIGN = v >= 0 ? 1 : -1),
+                new Knob("RobotHardware", "SHOOTER_EFF_POLLEN", "%.3f", 0.005, 0.001, 0.20, 0.60,
+                        () -> RobotHardware.SHOOTER_EFF_POLLEN,
+                        v -> RobotHardware.SHOOTER_EFF_POLLEN = v),
+                new Knob("RobotHardware", "SHOOTER_EFF_NECTAR", "%.3f", 0.005, 0.001, 0.20, 0.60,
+                        () -> RobotHardware.SHOOTER_EFF_NECTAR,
+                        v -> RobotHardware.SHOOTER_EFF_NECTAR = v),
             };
             default: return new Knob[0];
         }
@@ -757,6 +932,9 @@ public class RobotSetup extends LinearOpMode {
                 vision.forcePipeline(sel % 10);
                 note = "forced pipeline " + (sel % 10) + " and restarted";
                 break;
+            case CELLSHOT:
+                csStart();
+                break;
             default: break;
         }
     }
@@ -811,6 +989,9 @@ public class RobotSetup extends LinearOpMode {
                 break;
             case DIP:
                 stopDip(); note = "stopped";
+                break;
+            case CELLSHOT:
+                csStop(); note = "stopped";
                 break;
             case LIMIT_POLARITY: limitAtHome = null; note = "cleared"; break;
             case TURRET_SIGN:    turretSign = null;  note = "cleared"; break;
@@ -871,6 +1052,13 @@ public class RobotSetup extends LinearOpMode {
                 BallDetector.FRAME_IS_BGR = !BallDetector.FRAME_IS_BGR;
                 note = "reading frames as " + (BallDetector.FRAME_IS_BGR ? "BGR" : "RGB")
                      + " -- re-measure all three gates";
+                break;
+            case CELLSHOT:
+                // The other flywheel is a different barrel at a different
+                // range, so the one that was spinning has to stop.
+                csStop();
+                csBall = 1 - csBall;
+                note = (csBall == 0 ? "POLLEN" : "NECTAR") + " selected -- A to spin up";
                 break;
             default: note = "no X action on this step"; break;
         }
@@ -950,6 +1138,10 @@ public class RobotSetup extends LinearOpMode {
                 homeMarkTicks = robot.intakeMot.getCurrentPosition();
                 note = "switch marked at " + homeMarkTicks
                      + " ticks. Now jog to TRUE FORWARD and press A.";
+                break;
+            case CELLSHOT:
+                // Serviced while HELD, so nothing to do on the edge.
+                if (!csLive) note = "press A to spin up first";
                 break;
             case SHOOTER:
                 openLoop = true;
@@ -1056,6 +1248,7 @@ public class RobotSetup extends LinearOpMode {
 
     private void service() {
         serviceHoming();
+        serviceCellShot();
         serviceDirectionFallback();
         servicePwmRamp();
         if (deployRunning) {
@@ -1161,6 +1354,7 @@ public class RobotSetup extends LinearOpMode {
             case BALLS:          drawBalls();     break;
             case LIMELIGHT:      drawLimelight(); break;
             case PINPOINT:       drawPinpoint();  break;
+            case CELLSHOT:       drawCellShot();  break;
             case DUMP:           drawDump();      break;
             default:             drawKnobs();     break;
         }
@@ -1194,6 +1388,8 @@ public class RobotSetup extends LinearOpMode {
             case COLOR:          return "Y = arm (all six)   X = reset all";
             case LIMELIGHT:      return "dpad U/D pick pipeline   A = FORCE it";
             case BALLS:          return "Y=capture  B=clear  X=BGR/RGB  A=size chk";
+            case CELLSHOT:       return "A=spin up  X=POLLEN/NECTAR  Y HOLD=belt  B=stop"
+                                      + "   (SHOOTS A BALL)";
             case DUMP:           return "paste into source -- NOTHING IS SAVED";
             default:             return "bumpers coarse   triggers fine";
         }
@@ -2356,6 +2552,8 @@ public class RobotSetup extends LinearOpMode {
     }
 
     private void stopEverything() {
+        csLive = false;
+        csFeed(false);
         robot.intakeMot.setPower(0);
         deployRunning = false;
         stopDirectionMotors();
@@ -2389,6 +2587,12 @@ public class RobotSetup extends LinearOpMode {
             }
         }
         out.add("FIRE_ONLY_WHEN_STEADY = " + MechController.FIRE_ONLY_WHEN_STEADY + ";");
+        out.add("// --- from CELLSHOT ---");
+        out.add("ShooterRed.AIM_SIGN = " + ShooterRed.AIM_SIGN + ";");
+        out.add(String.format(Locale.US, "SHOOTER_EFF_POLLEN = %.3f;",
+                RobotHardware.SHOOTER_EFF_POLLEN));
+        out.add(String.format(Locale.US, "SHOOTER_EFF_NECTAR = %.3f;",
+                RobotHardware.SHOOTER_EFF_NECTAR));
         out.add("// --- TurretController ---");
         for (Knob k : knobs(Step.TURRET)) {
             if (k.name.equals("ENCODER_COUPLED")) {
