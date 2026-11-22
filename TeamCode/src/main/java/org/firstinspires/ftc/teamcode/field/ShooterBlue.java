@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.field;
 
+import org.firstinspires.ftc.teamcode.robot.HoodMap;
 import org.firstinspires.ftc.teamcode.robot.RobotHardware;
 
 public final class ShooterBlue {
@@ -121,7 +122,9 @@ public final class ShooterBlue {
         if (range < TABLE_MIN_IN || range > TABLE_MAX_IN) return Shot.invalid();
 
         final int i = index(range);
-        hood = hoodAt(ball, i);
+        hood = HoodMap.clampHood(hoodAt(ball, i)
+                + (ball == Ball.NECTAR ? ShooterRed.HOOD_TRIM_NECTAR
+                                       : ShooterRed.HOOD_TRIM_POLLEN));
         final double v = speedAt(ball, i);
         final double conf = (ball == Ball.POLLEN) ? POLLEN_MAKE[i] : NECTAR_MAKE[i];
         if (conf < MIN_CONFIDENCE_PCT) return Shot.invalid();

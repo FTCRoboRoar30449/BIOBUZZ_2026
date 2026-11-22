@@ -229,7 +229,8 @@ public class RobotSetup extends LinearOpMode {
     // is a number you select, not odometry, so nothing has to be seeded. The
     // turret covers the bearing, which is why the heading does not have to be
     // the match preset's -- 90 and 270 are what a tape measure can set.
-    private int csPreset = 0;        // 0 = AUD_MID, 1 = SCO_MID
+    // 0,1,2 = NEAR/MID/FAR calibration stands, 3,4 = the two match presets
+    private int csPreset = 0;
     private int csAlliance = 0;      // 0 = RED, 1 = BLUE
     private int csBall = 0;          // 0 = POLLEN, 1 = NECTAR
     private double csYaw = 90.0;
@@ -238,7 +239,24 @@ public class RobotSetup extends LinearOpMode {
     private long csFeedMs = 0;
     private ShooterAdapter csShooter = null;
     private int csShooterFor = -1;
-    private static final double[] CS_DEFAULT_YAW = { 90.0, 270.0 };
+    private static final String[] CS_NAMES =
+            { "NEAR", "MID", "FAR", "MATCH_AUD", "MATCH_SCO" };
+    private static final double[] CS_DEFAULT_YAW =
+            { 90.0, 90.0, 90.0, 90.0, 270.0 };
+
+    // NEAR/MID/FAR stand dead in line with the AUDIENCE cell, facing it, this
+    // far back from the point directly beneath it. One straight tape down the
+    // field places all three. Chosen to land on 24.5, 30.4 and 36.4 in of
+    // range -- the widest spread the table allows with both balls above 89%,
+    // since 21-23 and 38+ fail for nectar.
+    private static final double[] CS_BACK_IN = { 27.7, 33.8, 39.8 };
+    // What you saw, in inches of RANGE, measured parallel to the floor.
+    // Positive is LONG.
+    private double csMiss = 0.0;
+    private final ArrayList<String> csRows = new ArrayList<>();
+    // How long the belt actually ran for the last shot, which is the
+    // measurement FEED_RUN_MS still needs.
+    private long csLastFeedMs = 0;
 
     private ShooterAdapter csShooter() {
         if (csShooter == null || csShooterFor != csAlliance) {
@@ -249,18 +267,40 @@ public class RobotSetup extends LinearOpMode {
         return csShooter;
     }
 
+    private ShooterAdapter.Target csTarget() {
+        return csPreset == 4 ? ShooterAdapter.Target.SCORING_SIDE
+                             : ShooterAdapter.Target.AUDIENCE_SIDE;
+    }
+
     private Pose csPose() {
-        if (csAlliance == 0) return csPreset == 0 ? Red.SHOOT_AUD_MID : Red.SHOOT_SCO_MID;
-        return csPreset == 0 ? Blue.SHOOT_AUD_MID : Blue.SHOOT_SCO_MID;
+        if (csPreset < 3) {
+            ShooterAdapter.Target t = csTarget();
+            return new Pose(csShooter().goalX(t),
+                            csShooter().goalY(t) - CS_BACK_IN[csPreset],
+                            Math.toRadians(csYaw));
+        }
+        if (csAlliance == 0) return csPreset == 3 ? Red.SHOOT_AUD_MID : Red.SHOOT_SCO_MID;
+        return csPreset == 3 ? Blue.SHOOT_AUD_MID : Blue.SHOOT_SCO_MID;
     }
 
     private ShooterAdapter.Shot csShot() {
         Pose p = csPose();
         return csShooter().solve(
                 csBall == 0 ? ShooterAdapter.Ball.POLLEN : ShooterAdapter.Ball.NECTAR,
-                csPreset == 0 ? ShooterAdapter.Target.AUDIENCE_SIDE
-                              : ShooterAdapter.Target.SCORING_SIDE,
-                p.x(), p.y(), csYaw);
+                csTarget(), p.x(), p.y(), csYaw);
+    }
+
+    private void csRecord() {
+        ShooterAdapter.Shot s = csShot();
+        if (!s.valid) { note = "nothing to record -- no solution"; return; }
+        csRows.add(String.format(Locale.US, "%s,%s,%.1f,%.1f,%.0f,%.3f,%+.1f,%d,%d",
+                csBall == 0 ? "POLLEN" : "NECTAR",
+                CS_NAMES[csPreset],
+                s.rangeIn, s.hoodDeg, s.rpm,
+                csBall == 0 ? RobotHardware.SHOOTER_EFF_POLLEN
+                            : RobotHardware.SHOOTER_EFF_NECTAR,
+                csMiss, csLastFeedMs, Math.round(csMotor().getVelocity())));
+        note = "recorded row " + csRows.size() + " -- 'back' to see the CSV";
     }
 
     private DcMotorEx csMotor() {
@@ -302,9 +342,8 @@ public class RobotSetup extends LinearOpMode {
             conveyorPollenBed(false);
             conveyorNectarBed(false);
             if (csFeedMs > 0) {
-                note = String.format(Locale.US,
-                        "belt ran %d ms -- that is your FEED_RUN_MS",
-                        System.currentTimeMillis() - csFeedMs);
+                csLastFeedMs = System.currentTimeMillis() - csFeedMs;
+                note = "belt ran " + csLastFeedMs + " ms -- that is your FEED_RUN_MS";
                 csFeedMs = 0;
             }
         }
@@ -338,9 +377,16 @@ public class RobotSetup extends LinearOpMode {
         Pose p = csPose();
         ShooterAdapter.Shot s = csShot();
         telemetry.addLine(String.format(Locale.US, "%s %s -- stand at %.1f, %.1f facing %.0f",
-                csAlliance == 0 ? "RED" : "BLUE",
-                csPreset == 0 ? "AUD_MID" : "SCO_MID", p.x(), p.y(), csYaw));
-        telemetry.addLine("ball: " + (csBall == 0 ? "POLLEN" : "NECTAR"));
+                csAlliance == 0 ? "RED" : "BLUE", CS_NAMES[csPreset],
+                p.x(), p.y(), csYaw));
+        if (csPreset < 3) {
+            telemetry.addLine(String.format(Locale.US,
+                    "in line with the cell, %.1f in back from under it",
+                    CS_BACK_IN[csPreset]));
+        }
+        telemetry.addLine("ball: " + (csBall == 0 ? "POLLEN" : "NECTAR")
+                + "   rows " + csRows.size()
+                + "   last feed " + csLastFeedMs + " ms");
         telemetry.addLine("");
         if (!s.valid) {
             telemetry.addLine("NO SOLUTION for this ball from here.");
@@ -369,8 +415,9 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addLine("");
         drawKnobs();
         telemetry.addLine("");
-        telemetry.addLine("Landed SHORT -> lower that ball's EFF, LONG -> raise it.");
-        telemetry.addLine("Per inch of miss: pollen 0.005, nectar 0.008. Re-fire each nudge.");
+        telemetry.addLine("SHORT -> lower that ball's EFF, LONG -> raise it.");
+        telemetry.addLine("Per inch: pollen 0.005, nectar 0.008. Hood trim changes the arc.");
+        telemetry.addLine("Set 'miss' to what you saw, then START to record the row.");
     }
 
     // ---- knob abstraction, for the steps that are just numbers -------------
@@ -547,24 +594,32 @@ public class RobotSetup extends LinearOpMode {
                         v -> MechController.FLOWER_AIM_TRIM_DEG = v),
             };
             case CELLSHOT: return new Knob[] {
-                new Knob("here", "preset", "%.0f  (0=AUD_MID 1=SCO_MID)", 1, 1, 0, 1,
+                new Knob("here", "stand", "%.0f  (0=NEAR 1=MID 2=FAR 3,4=match)", 1, 1, 0, 4,
                         () -> csPreset,
                         v -> { csPreset = (int) v; csYaw = CS_DEFAULT_YAW[csPreset]; }),
-                new Knob("here", "alliance", "%.0f  (0=RED 1=BLUE)", 1, 1, 0, 1,
-                        () -> csAlliance, v -> csAlliance = (int) v),
                 new Knob("here", "ball", "%.0f  (0=POLLEN 1=NECTAR)", 1, 1, 0, 1,
                         () -> csBall, v -> csBall = (int) v),
-                new Knob("here", "heading", "%.0f deg", 5, 1, 0, 359,
-                        () -> csYaw, v -> csYaw = v),
-                new Knob("ShooterRed", "AIM_SIGN", "%+.0f  (turret L/R)", 2, 2, -1, 1,
-                        () -> ShooterRed.AIM_SIGN,
-                        v -> ShooterRed.AIM_SIGN = v >= 0 ? 1 : -1),
+                new Knob("here", "miss (+long)", "%+.1f in", 1.0, 0.5, -24, 24,
+                        () -> csMiss, v -> csMiss = v),
+                new Knob("ShooterRed", "HOOD_TRIM_POLLEN", "%+.1f deg", 1.0, 0.5, -20, 20,
+                        () -> ShooterRed.HOOD_TRIM_POLLEN,
+                        v -> ShooterRed.HOOD_TRIM_POLLEN = v),
+                new Knob("ShooterRed", "HOOD_TRIM_NECTAR", "%+.1f deg", 1.0, 0.5, -20, 20,
+                        () -> ShooterRed.HOOD_TRIM_NECTAR,
+                        v -> ShooterRed.HOOD_TRIM_NECTAR = v),
                 new Knob("RobotHardware", "SHOOTER_EFF_POLLEN", "%.3f", 0.005, 0.001, 0.20, 0.60,
                         () -> RobotHardware.SHOOTER_EFF_POLLEN,
                         v -> RobotHardware.SHOOTER_EFF_POLLEN = v),
                 new Knob("RobotHardware", "SHOOTER_EFF_NECTAR", "%.3f", 0.005, 0.001, 0.20, 0.60,
                         () -> RobotHardware.SHOOTER_EFF_NECTAR,
                         v -> RobotHardware.SHOOTER_EFF_NECTAR = v),
+                new Knob("here", "alliance", "%.0f  (0=RED 1=BLUE)", 1, 1, 0, 1,
+                        () -> csAlliance, v -> csAlliance = (int) v),
+                new Knob("here", "heading", "%.0f deg", 5, 1, 0, 359,
+                        () -> csYaw, v -> csYaw = v),
+                new Knob("ShooterRed", "AIM_SIGN", "%+.0f  (turret L/R)", 2, 2, -1, 1,
+                        () -> ShooterRed.AIM_SIGN,
+                        v -> ShooterRed.AIM_SIGN = v >= 0 ? 1 : -1),
             };
             default: return new Knob[0];
         }
@@ -629,7 +684,7 @@ public class RobotSetup extends LinearOpMode {
         waitForStart();
 
         boolean pL=false,pR=false,pU=false,pD=false;
-        boolean pA=false,pB=false,pX=false,pY=false,pLB=false,pRB=false,pBk=false;
+        boolean pA=false,pB=false,pX=false,pY=false,pLB=false,pRB=false,pBk=false,pSt=false;
 
         while (opModeIsActive()) {
             boolean l=gamepad1.dpad_left, r=gamepad1.dpad_right;
@@ -669,8 +724,10 @@ public class RobotSetup extends LinearOpMode {
             if (x && !pX) actionX();
             if (y && !pY) actionY();
             if (bk && !pBk) { step = Step.DUMP; dumpToLog(); note = "dump written to the log"; }
+            boolean st = gamepad1.start;
+            if (st && !pSt && step == Step.CELLSHOT) csRecord();
 
-            pL=l;pR=r;pU=u;pD=d;pA=a;pB=b;pX=x;pY=y;pLB=lb;pRB=rb;pBk=bk;
+            pL=l;pR=r;pU=u;pD=d;pA=a;pB=b;pX=x;pY=y;pLB=lb;pRB=rb;pBk=bk;pSt=st;
 
             service();
             push();
@@ -1388,8 +1445,8 @@ public class RobotSetup extends LinearOpMode {
             case COLOR:          return "Y = arm (all six)   X = reset all";
             case LIMELIGHT:      return "dpad U/D pick pipeline   A = FORCE it";
             case BALLS:          return "Y=capture  B=clear  X=BGR/RGB  A=size chk";
-            case CELLSHOT:       return "A=spin up  X=POLLEN/NECTAR  Y HOLD=belt  B=stop"
-                                      + "   (SHOOTS A BALL)";
+            case CELLSHOT:       return "A=spin up  X=ball  Y HOLD=belt  B=stop"
+                                      + "  START=record   (SHOOTS A BALL)";
             case DUMP:           return "paste into source -- NOTHING IS SAVED";
             default:             return "bumpers coarse   triggers fine";
         }
@@ -2589,6 +2646,12 @@ public class RobotSetup extends LinearOpMode {
         out.add("FIRE_ONLY_WHEN_STEADY = " + MechController.FIRE_ONLY_WHEN_STEADY + ";");
         out.add("// --- from CELLSHOT ---");
         out.add("ShooterRed.AIM_SIGN = " + ShooterRed.AIM_SIGN + ";");
+        out.add(String.format(Locale.US, "HOOD_TRIM_POLLEN = %.1f;  HOOD_TRIM_NECTAR = %.1f;",
+                ShooterRed.HOOD_TRIM_POLLEN, ShooterRed.HOOD_TRIM_NECTAR));
+        if (!csRows.isEmpty()) {
+            out.add("// ball,stand,range,hood,rpm,eff,miss,feed_ms,ticks_s");
+            out.addAll(csRows);
+        }
         out.add(String.format(Locale.US, "SHOOTER_EFF_POLLEN = %.3f;",
                 RobotHardware.SHOOTER_EFF_POLLEN));
         out.add(String.format(Locale.US, "SHOOTER_EFF_NECTAR = %.3f;",

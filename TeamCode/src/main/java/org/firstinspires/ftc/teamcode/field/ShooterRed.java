@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.field;
 
+import org.firstinspires.ftc.teamcode.robot.HoodMap;
 import org.firstinspires.ftc.teamcode.robot.RobotHardware;
 
 public final class ShooterRed {
@@ -97,6 +98,19 @@ public final class ShooterRed {
     // commanded angle is four times pollen's.
     public static int AIM_SIGN = -1;
 
+    // Degrees added to the table's hood. The table is a fit, so a whole
+    // barrel can sit off it; trim here, re-fire, and fold the result back
+    // into POLLEN_HOOD / NECTAR_HOOD once it is measured across the range.
+    // The rpm still comes from the table's own hood, so a large trim and the
+    // speed are no longer a matched pair -- that is the point, it is how you
+    // find the better pair.
+    public static double HOOD_TRIM_POLLEN = 0.0;
+    public static double HOOD_TRIM_NECTAR = 0.0;
+
+    public static double hoodTrim(Ball b) {
+        return b == Ball.NECTAR ? HOOD_TRIM_NECTAR : HOOD_TRIM_POLLEN;
+    }
+
     public static final class Shot {
         public final boolean valid;
         public final double turretDeg;
@@ -133,7 +147,7 @@ public final class ShooterRed {
         if (range < TABLE_MIN_IN || range > TABLE_MAX_IN) return Shot.invalid();
 
         final int i = index(range);
-        hood = hoodAt(ball, i);
+        hood = HoodMap.clampHood(hoodAt(ball, i) + hoodTrim(ball));
         final double v = speedAt(ball, i);
         final double conf = (ball == Ball.POLLEN) ? POLLEN_MAKE[i] : NECTAR_MAKE[i];
         if (conf < MIN_CONFIDENCE_PCT) return Shot.invalid();
