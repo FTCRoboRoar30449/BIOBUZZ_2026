@@ -92,6 +92,45 @@ public abstract class Auto_Base extends OpMode {
     protected int preloadPollen() { return PRELOAD_POLLEN; }
     protected int preloadNectar() { return PRELOAD_NECTAR; }
 
+    // ---- turn splitting ----------------------------------------------------
+    // leg() holds the TARGET heading from the first instant. Over a short hop
+    // that is right; over a long one it asks this drivetrain to spin and
+    // translate at once, which it cannot do -- it lurches, or just spins.
+    // So a leg that turns a lot AND travels far is split: a short leg at the
+    // NEW heading, then the rest as pure translation.
+    public static double TURN_LEG_IN = 10.0;
+    public static double TURN_SPLIT_DEG = 90.0;
+
+    protected static double wrapRad(double r) {
+        while (r > Math.PI) r -= 2 * Math.PI;
+        while (r <= -Math.PI) r += 2 * Math.PI;
+        return r;
+    }
+
+    protected static boolean needsTurnLeg(Pose a, Pose b) {
+        double dh = Math.abs(Math.toDegrees(wrapRad(b.heading() - a.heading())));
+        return dh > TURN_SPLIT_DEG
+                && Math.hypot(b.x() - a.x(), b.y() - a.y()) > TURN_LEG_IN * 2.5;
+    }
+
+    // TURN_LEG_IN along the way to b, already carrying b's heading.
+    protected static Pose turnPoint(Pose a, Pose b) {
+        double len = Math.hypot(b.x() - a.x(), b.y() - a.y());
+        double f = len > 1e-6 ? Math.min(TURN_LEG_IN / len, 0.5) : 0.0;
+        return new Pose(a.x() + (b.x() - a.x()) * f,
+                        a.y() + (b.y() - a.y()) * f, b.heading());
+    }
+
+    protected Step turnLeg(Pose a, Pose b) {
+        return new Step(leg(a, turnPoint(a, b)), null, null);
+    }
+
+    // Runtime version, for the steps that start wherever the sweep left off.
+    protected Step turnTowards(Pose to) {
+        return new Step(() -> legConst(follower.pose(), turnPoint(follower.pose(), to)),
+                null, null, false);
+    }
+
     // Give up waiting rather than hang the whole route.
     public static double MECH_WAIT_MAX_S = 5.0;
     private long mechWaitStart = 0;

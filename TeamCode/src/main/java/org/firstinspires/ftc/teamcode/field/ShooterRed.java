@@ -68,10 +68,11 @@ public final class ShooterRed {
     private static final double[] POLLEN_HOOD = {
             80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 74, 73, 73,
             72, 72, 66, 66, 65, 64, 64, 63, 63, 62, 61, 61 };
-    // Rescaled so SHOOTER_EFF_POLLEN = 0.465 reproduces the rpm actually
-    // fired at every measured range, within 0.4%. Before this the efficiency
-    // had to be walked from 0.470 at 24 in to 0.445 at 36 in, which is the
-    // table's shape being wrong, not the constant.
+    // Shaped so ONE efficiency works at every range. It used to have to be
+    // walked from 0.470 at 24 in to 0.445 at 36 in, which is this table's
+    // shape being wrong rather than the constant. The constant lives in
+    // RobotHardware and rescales every row here at once, so changing it
+    // never requires touching this array.
     private static final double[] POLLEN_V = {
             4.712, 4.708, 4.752, 4.796, 4.865, 4.935, 5.005, 5.124, 5.196,
             4.947, 4.993, 5.040, 5.088, 5.135, 5.184, 5.182, 5.205, 5.280,
@@ -106,6 +107,17 @@ public final class ShooterRed {
     // far more than pollen -- the signature of an inverted sign, since nectar's
     // commanded angle is four times pollen's.
     public static int AIM_SIGN = -1;
+
+    // Constant lateral offset, added to every hive turret angle. The turret
+    // is driven OPEN LOOP (TurretController.CLOSED_LOOP and ENCODER_COUPLED
+    // are both false), so nothing checks it arrived -- "SETTLED" is a timer.
+    // Anything that shifts the output by a fixed amount, a SERVO_AT_ZERO
+    // that drifted, a home that landed differently, or the 7.97 deg of gear
+    // lash approached from the other side, shows up as every shot missing
+    // the same way. Dial it out here rather than moving the geometry.
+    // POSITIVE IS LEFT, so a turret facing left of the cell wants a
+    // NEGATIVE trim.
+    public static double AIM_TRIM_DEG = 0.0;
 
     // Degrees added to the table's hood. The table is a fit, so a whole
     // barrel can sit off it; trim here, re-fire, and fold the result back
@@ -165,7 +177,7 @@ public final class ShooterRed {
         final double eff = RobotHardware.shooterEfficiency(ball == Ball.NECTAR);
         final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * eff);
         final double bearingDeg = Math.toDegrees(bearing);
-        return new Shot(true, wrap180(AIM_SIGN * (robotYawDeg - bearingDeg)),
+        return new Shot(true, wrap180(AIM_SIGN * (robotYawDeg - bearingDeg) + AIM_TRIM_DEG),
                 hood, rpm, range, bearingDeg, conf);
     }
 
@@ -219,7 +231,7 @@ public final class ShooterRed {
         Shot p = solve(Ball.POLLEN, tgt, x, y, robotYawDeg);
         Shot n = solve(Ball.NECTAR, tgt, x, y, robotYawDeg);
         if (!p.valid || !n.valid) return Double.NaN;
-        return wrap180(AIM_SIGN * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg)));
+        return wrap180(AIM_SIGN * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg)) + AIM_TRIM_DEG);
     }
 
     // ---- firing modes ----------------------------------------------------

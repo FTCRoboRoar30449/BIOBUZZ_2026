@@ -78,12 +78,15 @@ public class RobotHardware {
     // MEASURED 22 Nov, step 29, four stands. Nectar barely moved across the
     // whole range (0.429-0.434), so the nectar speed table is sound.
     public static double SHOOTER_EFF_NECTAR = 0.432;
-    // MEASURED 22 Nov. 0.360 was badly wrong -- the real figure is ~29%
-    // higher, so every pollen shot was being over-sped. Tuned at 24-28 in,
-    // where it wants 0.465-0.470. At 36 in it wants 0.445, so the pollen
-    // speed table rises too slowly with range; one constant cannot serve
-    // both ends and this one favours the short end, where the robot hits.
-    public static double SHOOTER_EFF_POLLEN = 0.465;
+    // RE-MEASURED 22 Nov, streaming. Step 29 calibration fires ONE ball on a
+    // fully spun-up wheel and gave 0.465; four balls on one continuous belt
+    // run need 0.435, which is 7% more rpm. That gap is the wheel sagging
+    // under balls two to four, so the match value is this one.
+    // The original 0.360 was badly wrong, so every pollen shot was over-sped.
+    // One constant now serves every range because POLLEN_V was reshaped to
+    // take the slope -- changing this value rescales the whole table at once,
+    // so it never needs the array touched.
+    public static double SHOOTER_EFF_POLLEN = 0.435;
 
     public static double shooterEfficiency(boolean nectar) {
         return nectar ? SHOOTER_EFF_NECTAR : SHOOTER_EFF_POLLEN;

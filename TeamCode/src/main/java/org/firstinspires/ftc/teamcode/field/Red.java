@@ -34,12 +34,16 @@ public final class Red {
     public static final Pose SHOOT_SCO_EAST   = at(80.0, 108.0, 146);
 
     // ---- the shot that actually scores, 22 Nov ----
-    // Dead in line with the cell, square to the field, 27.7 in back from the
-    // point beneath it. Both balls land on 24.5 in, hood 75, turret +-9.5,
-    // and that is the only range measured at 0.88 -- 26.5 in gave 0.44 and
-    // 36.4 in gave 0.33. Every auto and the gamepad 2 A macro aim here.
-    public static final Pose SHOOT_CLOSE_AUD  = at(59.25,  31.6,  90);
-    public static final Pose SHOOT_CLOSE_SCO  = at(59.25, 112.4, -90);
+    // Offset so the POLLEN BARREL, not the robot centre, is dead in line
+    // with the cell: pollen turret comes out at 0.00 deg. The turret is open
+    // loop with 7.97 deg of measured gear lash -- 1.71 in of lateral error at
+    // this range for half of it -- and a turret that never leaves home
+    // cannot spend any of it. Range is still 24.5 in at hood 75, the only
+    // one measured at 0.88. Nectar takes -18.2 at 25.8 in, which still
+    // solves; with a 4-pollen preload it never fires in auto anyway.
+    // x = goalX -+ AXIS_LAT, sign set by the heading.
+    public static final Pose SHOOT_CLOSE_AUD  = at(55.31,  31.25,  90);
+    public static final Pose SHOOT_CLOSE_SCO  = at(63.19, 112.75, -90);
 
     // Names the cycle autos use. REVERTED 22 Nov after a field test: pointing
     // these at SHOOT_CLOSE_SCO put a 180 deg heading step into six routes,
@@ -47,9 +51,9 @@ public final class Red {
     // drivetrain lurches on a step that large. The only auto that still ran
     // clean was the one route with no turn on any leg. The close pose is
     // worth 0.88 against 0.33, but not at the price of not arriving.
-    public static final Pose SHOOT_NEAR       = SHOOT_AUD_MID;
-    public static final Pose SHOOT_MID        = SHOOT_SCO_MID;
-    public static final Pose SHOOT_FAR        = SHOOT_SCO_EAST;
+    public static final Pose SHOOT_NEAR       = SHOOT_CLOSE_AUD;
+    public static final Pose SHOOT_MID        = SHOOT_CLOSE_SCO;
+    public static final Pose SHOOT_FAR        = SHOOT_CLOSE_SCO;
 
     // ---- collecting ----
     // Waypoints the garden runs route through. They take the heading of the

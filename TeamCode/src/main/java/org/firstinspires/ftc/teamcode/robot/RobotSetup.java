@@ -274,8 +274,11 @@ public class RobotSetup extends LinearOpMode {
 
     private Pose csPose() {
         if (csPreset < 3) {
+            // Offset so the POLLEN BARREL is in line with the cell, matching
+            // the match poses -- pollen turret 0.00, so calibration happens
+            // under the same lash-free conditions the robot shoots in.
             ShooterAdapter.Target t = csTarget();
-            return new Pose(csShooter().goalX(t),
+            return new Pose(csShooter().goalX(t) - ShooterRed.AXIS_LAT,
                             csShooter().goalY(t) - CS_BACK_IN[csPreset],
                             Math.toRadians(csYaw));
         }
@@ -630,6 +633,12 @@ public class RobotSetup extends LinearOpMode {
                         () -> csAlliance, v -> csAlliance = (int) v),
                 new Knob("here", "heading", "%.0f deg", 5, 1, 0, 359,
                         () -> csYaw, v -> csYaw = v),
+                // Positive is LEFT, so a turret aiming left of the cell wants
+                // this negative. The turret is open loop, so a constant
+                // offset is the likeliest fault and this is where it lives.
+                new Knob("ShooterRed", "AIM_TRIM_DEG", "%+.1f deg", 1.0, 0.2, -30, 30,
+                        () -> ShooterRed.AIM_TRIM_DEG,
+                        v -> ShooterRed.AIM_TRIM_DEG = v),
                 new Knob("ShooterRed", "AIM_SIGN", "%+.0f  (turret L/R)", 2, 2, -1, 1,
                         () -> ShooterRed.AIM_SIGN,
                         v -> ShooterRed.AIM_SIGN = v >= 0 ? 1 : -1),
@@ -2663,6 +2672,8 @@ public class RobotSetup extends LinearOpMode {
         out.add("FIRE_ONLY_WHEN_STEADY = " + MechController.FIRE_ONLY_WHEN_STEADY + ";");
         out.add("// --- from CELLSHOT ---");
         out.add("ShooterRed.AIM_SIGN = " + ShooterRed.AIM_SIGN + ";");
+        out.add(String.format(Locale.US, "ShooterRed.AIM_TRIM_DEG = %.1f;",
+                ShooterRed.AIM_TRIM_DEG));
         out.add(String.format(Locale.US, "HOOD_TRIM_POLLEN = %.1f;  HOOD_TRIM_NECTAR = %.1f;",
                 ShooterRed.HOOD_TRIM_POLLEN, ShooterRed.HOOD_TRIM_NECTAR));
         if (!csRows.isEmpty()) {

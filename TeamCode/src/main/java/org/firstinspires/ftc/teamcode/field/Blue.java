@@ -38,13 +38,13 @@ public final class Blue {
     public static final Pose SHOOT_SCO_EAST   = mirror(Red.SHOOT_SCO_EAST);
 
     // ---- the shot that actually scores, 22 Nov. See Red for the numbers ----
-    public static final Pose SHOOT_CLOSE_AUD  = new Pose(84.75,  31.6, Math.toRadians(90));
-    public static final Pose SHOOT_CLOSE_SCO  = new Pose(84.75, 112.4, Math.toRadians(-90));
+    public static final Pose SHOOT_CLOSE_AUD  = new Pose(80.81,  31.25, Math.toRadians(90));
+    public static final Pose SHOOT_CLOSE_SCO  = new Pose(88.69, 112.75, Math.toRadians(-90));
 
     // REVERTED 22 Nov -- see Red for why.
-    public static final Pose SHOOT_NEAR       = SHOOT_AUD_MID;
-    public static final Pose SHOOT_MID        = SHOOT_SCO_MID;
-    public static final Pose SHOOT_FAR        = SHOOT_SCO_EAST;
+    public static final Pose SHOOT_NEAR       = SHOOT_CLOSE_AUD;
+    public static final Pose SHOOT_MID        = SHOOT_CLOSE_SCO;
+    public static final Pose SHOOT_FAR        = SHOOT_CLOSE_SCO;
 
     // GARDENs are 180 deg rotationally symmetric: RED's is the bottom-left
     // corner, BLUE's the top-right. mirror() sent BLUE to the bottom-right,

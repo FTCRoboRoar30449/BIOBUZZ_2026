@@ -64,10 +64,8 @@ public final class ShooterBlue {
     private static final double[] POLLEN_HOOD = {
             80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 74, 73, 73,
             72, 72, 66, 66, 65, 64, 64, 63, 63, 62, 61, 61 };
-    // Rescaled so SHOOTER_EFF_POLLEN = 0.465 reproduces the rpm actually
-    // fired at every measured range, within 0.4%. Before this the efficiency
-    // had to be walked from 0.470 at 24 in to 0.445 at 36 in, which is the
-    // table's shape being wrong, not the constant.
+    // Shaped so ONE efficiency works at every range -- see ShooterRed. The
+    // constant lives in RobotHardware and rescales every row at once.
     private static final double[] POLLEN_V = {
             4.712, 4.708, 4.752, 4.796, 4.865, 4.935, 5.005, 5.124, 5.196,
             4.947, 4.993, 5.040, 5.088, 5.135, 5.184, 5.182, 5.205, 5.280,
@@ -141,7 +139,7 @@ public final class ShooterBlue {
         final double eff = RobotHardware.shooterEfficiency(ball == Ball.NECTAR);
         final double rpm = 60.0 * v / (Math.PI * RobotHardware.SHOOTER_WHEEL_DIA_M * eff);
         final double bearingDeg = Math.toDegrees(bearing);
-        return new Shot(true, wrap180(ShooterRed.AIM_SIGN * (robotYawDeg - bearingDeg)),
+        return new Shot(true, wrap180(ShooterRed.AIM_SIGN * (robotYawDeg - bearingDeg) + ShooterRed.AIM_TRIM_DEG),
                 hood, rpm, range, bearingDeg, conf);
     }
 
@@ -196,7 +194,8 @@ public final class ShooterBlue {
         Shot n = solve(Ball.NECTAR, tgt, x, y, robotYawDeg);
         if (!p.valid || !n.valid) return Double.NaN;
         return wrap180(ShooterRed.AIM_SIGN
-                * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg)));
+                * (robotYawDeg - 0.5 * (p.bearingDeg + n.bearingDeg))
+                + ShooterRed.AIM_TRIM_DEG);
     }
 
     // ---- firing modes ----------------------------------------------------

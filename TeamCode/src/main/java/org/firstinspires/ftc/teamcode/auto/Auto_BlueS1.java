@@ -17,11 +17,14 @@ public class Auto_BlueS1 extends Auto_Base {
     protected Step[] buildSteps() {
         return new Step[] {
             shootLeg(Blue.START, Blue.SHOOT_NEAR),
-            new Step(leg(Blue.SHOOT_NEAR, Blue.GARDEN_VIA), null),
+            turnLeg(Blue.SHOOT_NEAR, Blue.GARDEN_VIA),
+            new Step(leg(turnPoint(Blue.SHOOT_NEAR, Blue.GARDEN_VIA), Blue.GARDEN_VIA), null),
             new Step(leg(Blue.GARDEN_VIA, Blue.GARDEN_APPROACH), null),
             new Step(leg(Blue.GARDEN_APPROACH, Blue.GARDEN), MechState.INTAKE_FIELD, null),
-            shootCurve(Blue.GARDEN, Blue.C_GARDEN_SHOOT, Blue.SHOOT_MID),
-            new Step(leg(Blue.SHOOT_MID, Blue.PARK), MechState.IDLE),
+            turnLeg(Blue.GARDEN, Blue.SHOOT_MID),
+            shootCurve(turnPoint(Blue.GARDEN, Blue.SHOOT_MID), Blue.C_GARDEN_SHOOT, Blue.SHOOT_MID),
+            turnLeg(Blue.SHOOT_MID, Blue.PARK),
+            new Step(leg(turnPoint(Blue.SHOOT_MID, Blue.PARK), Blue.PARK), MechState.IDLE),
         };
     }
 }

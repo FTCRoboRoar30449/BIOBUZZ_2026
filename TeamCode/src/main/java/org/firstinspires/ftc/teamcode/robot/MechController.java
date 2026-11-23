@@ -36,9 +36,16 @@ public class MechController {
     // ---- conveyor / storage ----------------------------------------------
     public static int TICKS_PER_POLLEN_STORAGE = 200;   // measured 14 Nov (was 100)
     public static int TICKS_PER_NECTAR_STORAGE = 250;   // measured 14 Nov (was 150)
-    public static int TICKS_TO_SHOOT_POLLEN = 400;   // measured 14 Nov (was 300)
-    public static int TICKS_TO_SHOOT_NECTAR = 500;   // measured 14 Nov (was 200)
-    public static int TICKS_TO_SHOOT_BOTH = 500;   // measured 14 Nov (was 300)
+    // TRIPLED 22 Nov. In continuous fire these are not a belt stroke -- they
+    // are the travel-per-ball the counter uses to decide a ball has left.
+    // Too small and the count reaches zero while balls are still in the
+    // tunnel, which is why a volley sometimes ended with the magazine not
+    // empty. Tripling makes the belt run three times as far before the count
+    // is satisfied, so everything gets out. Side effect: the CELL estimate
+    // climbs three times slower, so read it as a lower bound.
+    public static int TICKS_TO_SHOOT_POLLEN = 1200;  // measured 400, x3
+    public static int TICKS_TO_SHOOT_NECTAR = 1500;  // measured 500, x3
+    public static int TICKS_TO_SHOOT_BOTH = 1500;  // measured 500, x3
 
     // 17 Nov: the TICKS_TO_SHOOT_* stroke does not carry a ball from the
     // tunnel to the flywheel. Index strokes and the encoder are fine, so this
