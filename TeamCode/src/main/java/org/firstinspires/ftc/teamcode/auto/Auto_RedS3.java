@@ -21,7 +21,6 @@ public class Auto_RedS3 extends Auto_Base {
             new Step(leg(turnPoint(Red.SHOOT_NEAR, Red.GARDEN_VIA), Red.GARDEN_VIA), MechState.INTAKE_FIELD, null),
             new Step(leg(Red.GARDEN_VIA, Red.GARDEN), null, null),
             sweep(),
-            // shootTo, not shootLeg: the sweep ended at the last ball
             driveTo(Red.GARDEN_VIA, null, null),
             turnTowards(Red.SHOOT_NEAR),
             shootTo(Red.SHOOT_NEAR),

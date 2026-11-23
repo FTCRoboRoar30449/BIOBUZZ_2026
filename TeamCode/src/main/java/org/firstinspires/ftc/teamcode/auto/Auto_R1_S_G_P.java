@@ -16,11 +16,12 @@ public class Auto_R1_S_G_P extends Auto_Base {
 
     @Override
     protected Step[] buildSteps() {
-        Path toTurn   = leg(Red.START, Red.GARDEN_TURN);
+        Path toTurn   = leg(Red.SHOOT_CLOSE_AUD, Red.GARDEN_TURN);
         Path toVia    = leg(Red.GARDEN_TURN, Red.GARDEN_VIA);
         Path toGarden = leg(Red.GARDEN_VIA, Red.GARDEN);
         Path toPark = curveTangent(Red.GARDEN, Red.C_GARDEN_PARK, Red.PARK);
         return new Step[] {
+            shootLeg(Red.START, Red.SHOOT_CLOSE_AUD),
             new Step(toTurn, MechState.INTAKE_FIELD, null),
             new Step(toVia, null, null),
             new Step(toGarden, null, null),

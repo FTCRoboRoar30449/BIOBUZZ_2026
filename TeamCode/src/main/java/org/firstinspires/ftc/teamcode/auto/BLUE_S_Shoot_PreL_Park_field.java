@@ -7,9 +7,6 @@ import org.firstinspires.ftc.teamcode.field.Blue;
 import org.firstinspires.ftc.teamcode.robot.MechState;
 import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 
-// Preload only: leave, stream the preload into the BLUE scoring cell, park
-// in two legs so the run stays clear of the hive frame.
-// Shoots from the measured best spot: 24.5 in, hood 75, turret +9.5.
 @Autonomous(name = "BLUE S preload shoot park", group = "Blue")
 public class BLUE_S_Shoot_PreL_Park_field extends Auto_Base {
 

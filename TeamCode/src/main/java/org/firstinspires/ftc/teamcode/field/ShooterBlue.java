@@ -21,15 +21,13 @@ public final class ShooterBlue {
     public static double pedroToDiagram(double pedroIn)   { return pedroIn - PEDRO_OFFSET_IN; }
 
     // ---- targets, PEDRO inches -------------------------------------------
-    private static final double[] GOAL_X = { 84.75, 84.75 };
-    // See ShooterRed: the four CELLS form a 25.4 in square centred on 72,72.
-    private static final double[] GOAL_Y = { 84.7, 59.3 };
-    // cluster: diagram (+12.75, +/-12.89) -> pedro (84.75, 84.89 / 59.11)
+    private static final double[] GOAL_X = { 84.758, 84.758 };
+    private static final double[] GOAL_Y = { 87.777, 56.223 };
     private static final double[] TAG_X  = { 84.75, 84.75 };
     private static final double[] TAG_Y  = { 84.89, 59.11 };
     private static final int[][]  TAG_ID = { {42, 43, 44, 45}, {38, 39, 40, 41} };
 
-    public static final double GOAL_Z = 59.55;
+    public static final double GOAL_Z = 59.537;
     public static final double TAG_Z  = 49.662;
 
     public static double goalX(Target t) { return GOAL_X[t.ordinal()]; }
@@ -45,45 +43,45 @@ public final class ShooterBlue {
     }
 
     // ---- turret rings, ROBOT frame, inches ------------------------------
-    public static final double AXIS_FWD = 105.0 / 25.4;   // 4.1339
-    public static final double AXIS_LAT = 100.0 / 25.4;   // 3.9370
+    public static final double AXIS_FWD = 105.0 / 25.4;
+    public static final double AXIS_LAT = 100.0 / 25.4;
 
     // ---- flywheel --------------------------------------------------------
 
     public static final double TABLE_MIN_IN = 15.0;
-    public static final double TABLE_MAX_IN = 39.0;
+    public static final double TABLE_MAX_IN = 46.0;
 
     // ---- Limelight 3A, turret-mounted ------------------------------------
 
     // ---- tables, one entry per inch of range from 15 in -------------------
-    // RESHAPED 22 Nov from the measured CSV. The old table was a flat 80/75/70
-    // and needed a hood trim that swung from -2 at 24 in to -8 at 36 in; that
-    // slope is now in the table itself, so one trim of zero works everywhere.
-    // Fitted trim(range) = 13.484 - 0.5795*range over the four measured
-    // stands, clamped to the measured span so the ends are not extrapolated.
+    // the check against Step3_Shooter Calibration.csv.
     private static final double[] POLLEN_HOOD = {
-            80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 74, 73, 73,
-            72, 72, 66, 66, 65, 64, 64, 63, 63, 62, 61, 61 };
-    // Shaped so ONE efficiency works at every range -- see ShooterRed. The
-    // constant lives in RobotHardware and rescales every row at once.
+            81, 80, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75,
+            74, 74, 73, 73, 73, 72, 72, 71, 71, 71, 70, 70, 69,
+            69, 69, 68, 68, 68, 67 };
     private static final double[] POLLEN_V = {
-            4.712, 4.708, 4.752, 4.796, 4.865, 4.935, 5.005, 5.124, 5.196,
-            4.947, 4.993, 5.040, 5.088, 5.135, 5.184, 5.182, 5.205, 5.280,
-            5.304, 5.328, 5.379, 5.429, 5.455, 5.533, 5.559 };
+            4.683, 4.694, 4.704, 4.716, 4.727, 4.739, 4.752, 4.764, 4.778,
+            4.791, 4.805, 4.819, 4.833, 4.848, 4.863, 4.878, 4.893, 4.909,
+            4.925, 4.941, 4.958, 4.974, 4.991, 5.008, 5.025, 5.042, 5.059,
+            5.077, 5.094, 5.112, 5.130, 5.148 };
     private static final double[] POLLEN_MAKE = {
-            81.1, 83.0, 87.9, 89.2, 92.5, 93.3, 94.2, 91.6, 87.9, 92.9, 94.9, 92.8,
-            95.0, 92.7, 94.9, 92.7, 92.7, 92.5, 92.5, 92.5, 94.7, 92.2, 92.2, 91.9, 91.9 };
+            50.0, 50.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0 };
 
     private static final double[] NECTAR_HOOD = {
-            80, 80, 80, 80, 80, 80, 80, 80, 75, 75, 75, 75, 75,
-            75, 75, 75, 70, 70, 70, 70, 70, 70, 70, 70, 70 };
+            81, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75, 75,
+            74, 74, 73, 73, 72, 72, 71, 71, 71, 70, 70, 70, 69,
+            69, 68, 68, 68, 67, 67 };
     private static final double[] NECTAR_V = {
-            4.925, 4.900, 4.925, 4.975, 5.025, 5.075, 5.150, 5.200, 4.975,
-            4.975, 5.000, 5.025, 5.050, 5.075, 5.100, 5.150, 5.075, 5.075,
-            5.125, 5.125, 5.150, 5.175, 5.175, 5.225, 5.225 };
+            4.638, 4.649, 4.660, 4.671, 4.683, 4.695, 4.708, 4.721, 4.735,
+            4.749, 4.763, 4.777, 4.792, 4.807, 4.822, 4.838, 4.854, 4.870,
+            4.886, 4.902, 4.919, 4.936, 4.953, 4.970, 4.988, 5.005, 5.023,
+            5.041, 5.059, 5.077, 5.095, 5.113 };
     private static final double[] NECTAR_MAKE = {
-            68.8, 76.7, 83.0, 86.4, 89.0, 90.8, 86.3, 83.4, 89.5, 89.9, 92.9, 90.0,
-            92.9, 89.8, 92.7, 92.5, 89.9, 89.9, 89.6, 89.6, 92.5, 89.3, 89.3, 88.9, 88.9 };
+            50.0, 50.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0 };
 
     public static double setbackIn(Ball ball, double hoodDeg) {
         double a55 = (ball == Ball.NECTAR) ?  6.208 :  5.323;
@@ -122,7 +120,6 @@ public final class ShooterBlue {
 
         final double bearing = Math.atan2(dy, dx);
 
-        // Range depends on hood through the setback, and hood comes from range.
         double range = dAxis + setbackIn(ball, 70.0);
         double hood  = hoodAt(ball, index(range));
         range = dAxis + setbackIn(ball, hood);

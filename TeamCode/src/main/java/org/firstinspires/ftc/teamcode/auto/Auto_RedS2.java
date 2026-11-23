@@ -7,7 +7,6 @@ import org.firstinspires.ftc.teamcode.field.Red;
 import org.firstinspires.ftc.teamcode.robot.MechState;
 import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 
-// RED far-side cycle: start far, shoot, sweep the far garden, shoot, flower
 @Autonomous(name = "Auto RED S2 far cycle", group = "Red")
 public class Auto_RedS2 extends Auto_Base {
 
@@ -22,7 +21,6 @@ public class Auto_RedS2 extends Auto_Base {
             new Step(leg(turnPoint(Red.SHOOT_MID, Red.GARDEN_VIA_FAR), Red.GARDEN_VIA_FAR), MechState.INTAKE_FIELD, null),
             new Step(leg(Red.GARDEN_VIA_FAR, Red.GARDEN_FAR), null, null),
             sweep(),
-            // The sweep ended at the last ball, not at GARDEN_FAR.
             driveTo(Red.GARDEN_VIA_FAR, null, null),
             turnTowards(Red.SHOOT_MID),
             shootTo(Red.SHOOT_MID),

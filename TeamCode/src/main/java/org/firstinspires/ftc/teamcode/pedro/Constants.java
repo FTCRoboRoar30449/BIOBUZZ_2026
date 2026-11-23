@@ -40,7 +40,6 @@ public class Constants {
         c.offsetUnits.set(DistanceUnit.INCH);
     });
 
-    // Heading controller shape. See the comment on headingFeedback below.
     public static boolean USE_SOFT_HEADING = true;
     public static double HEADING_SOFT_GAIN = 5.0;
     public static double HEADING_SOFT_BAND_DEG = 10.0;
@@ -57,17 +56,6 @@ public class Constants {
                 c.coast.set(Controller.proportionalFeedforward(0.0313970192686813));
                 c.brake.set(Controller.proportionalFeedforward(0.026687466378379102));
 
-                // 21 Nov. A single proportional gain of 17.6 holds a fixed
-                // heading fine but rings on a moving one: the eight
-                // TestPure/TestBase runs jittered on every ramp and were clean
-                // on every hold. Same cure the translational axes already use
-                // above -- a gentler gain near zero error, full authority
-                // beyond it. Threshold is in RADIANS, like every other Pedro
-                // heading value.
-                //
-                // HEADING_SOFT_GAIN and HEADING_SOFT_BAND_DEG are UNMEASURED.
-                // Run P2 and P4: if they still jitter, halve the gain; if the
-                // robot now lags the heading, raise it.
                 Controller headingPrimary = Controller.proportional(17.61616141678706);
                 Controller headingSoft = Controller.proportional(HEADING_SOFT_GAIN);
                 c.headingFeedback.set(USE_SOFT_HEADING

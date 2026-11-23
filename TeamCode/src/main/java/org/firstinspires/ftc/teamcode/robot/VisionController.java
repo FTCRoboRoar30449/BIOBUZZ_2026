@@ -20,13 +20,11 @@ public class VisionController {
     private VisionPortal visionPortal;
     private BallDetector ballDetector;
 
-    // Presence gate.
     public static double DISTANCE_BALL_MM = 20.0;
 
     public static int REQUIRED_STABLE_FRAMES = 4;
     public static int LOST_FRAMES_TO_CLEAR = 10;
 
-    // Colour gates, hue in DEGREES 0-360 (not OpenCV's 0-179 -- these come
     public static float POLLEN_H_LO = 80,  POLLEN_H_HI = 110;
     public static float NECTAR_R_H_LO = 15,  NECTAR_R_H_HI = 35;
     public static float NECTAR_B_H_LO = 215, NECTAR_B_H_HI = 240;
@@ -54,7 +52,6 @@ public class VisionController {
         ballDetector = new BallDetector();
         VisionPortal.Builder b = new VisionPortal.Builder()
                 .setCamera(robot.camera)
-                // 4:3 native. The C270's 55 deg diagonal gives 45.2 x 34.7
                 .setCameraResolution(new android.util.Size(640, 480));
 
         if (ENABLE_C270_APRILTAG) {
@@ -83,10 +80,8 @@ public class VisionController {
     public AprilTagProcessor getAprilTag() { return aprilTag; }
     public VisionPortal getVisionPortal() { return visionPortal; }
 
-    // Switch the ball detector's per-frame work on and off without touching
     public void setBallDetectionEnabled(boolean on) {
         if (visionPortal == null || ballDetector == null || on == ballDetectionOn) return;
-        // Order matters when switching OFF: stop accepting results first
         if (!on) ballDetector.setAccepting(false);
         visionPortal.setProcessorEnabled(ballDetector, on);
         if (on) ballDetector.setAccepting(true);
@@ -158,11 +153,10 @@ public class VisionController {
             return raisedTarget;
         }
 
-        // Majority vote across whichever of our tags are in frame.
         int scoringVotes = 0, audVotes = 0, seen = 0, firstId = -1;
         for (LLResultTypes.FiducialResult f : tags) {
             ShooterAdapter.Target t = shooter.targetForTagId(f.getFiducialId());
-            if (t == null) continue;          // other alliance, or a wall tag
+            if (t == null) continue;
             seen++;
             if (firstId < 0) firstId = f.getFiducialId();
             if (t == ShooterAdapter.Target.SCORING_SIDE) scoringVotes++; else audVotes++;
@@ -221,7 +215,7 @@ public class VisionController {
     // ---- flower pollen count ----------------------------------------------
 
     public int getFlowerPollenCount() {
-        if (ballDetector == null) return -1;      // camera not started
+        if (ballDetector == null) return -1;
         return ballDetector.pollenInView();
     }
 
@@ -229,7 +223,6 @@ public class VisionController {
 
     public void stopLimelight() {
         robot.limeLight.stop();
-        // Forget the pipeline, or the idempotence guard
         currentPipeline = -1;
     }
 
@@ -243,7 +236,6 @@ public class VisionController {
 
     // ---- colour sensors ---------------------------------------------------
 
-    // This logic is ORIGINAL and is VALIDATED.
     public boolean ballCheck(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
         return sensorL.getDistance(DistanceUnit.MM) < DISTANCE_BALL_MM
                 || sensorR.getDistance(DistanceUnit.MM) < DISTANCE_BALL_MM;
@@ -273,7 +265,6 @@ public class VisionController {
         return classify(h, s, v);
     }
 
-    // Shared so RobotSetup step 13 can show the SAME verdict the robot will
     public static int classify(float h, float s, float v) {
         if (h >= POLLEN_H_LO && h <= POLLEN_H_HI
                 && s >= POLLEN_S_MIN && v >= POLLEN_V_MIN) return 1;

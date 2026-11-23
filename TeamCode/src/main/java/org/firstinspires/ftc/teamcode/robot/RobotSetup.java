@@ -23,55 +23,52 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-// THE tuning tool.
 @TeleOp(name = "Robot Setup", group = "calibration")
 public class RobotSetup extends LinearOpMode {
 
-    // Order matters: each step needs the one above it.
     private enum Step {
         // ---- CHECK: is it wired, does it turn the right way ----
-        DEVICES,        //  1  everything resolves
-        DIRECTION,      //  2  motor directions
-        SERVO_LIMITS,   //  3  every servo's mechanical stops
+        DEVICES,
+        DIRECTION,
+        SERVO_LIMITS,
 
         // ---- MECH: the half of the robot that is not the turret ----
-        DEPLOY,         //  4  arm swing, then scoop
-        SCOOP,          //  5  flower endpoints
-        BEDS,           //  6  bed endpoints
-        INDEX,          //  7  ticks into the tunnels
-        FEED,           //  8  ticks out, belt power
-        HOOD_POLLEN,    //  9  POLLEN_POS_AT_55
-        HOOD_NECTAR,    // 10  NECTAR_POS_AT_55
-        SHOOTER,        // 11  PIDF -- flywheels mounted
-        DIP,            // 12  thresholds vs spread
+        DEPLOY,
+        SCOOP,
+        BEDS,
+        INDEX,
+        FEED,
+        HOOD_POLLEN,
+        HOOD_NECTAR,
+        SHOOTER,
+        DIP,
 
         // ---- SENSE: nothing here moves anything ----
-        COLOR,          // 13  colour sensors
-        BALLS,          // 14  C270 HSV gates
-        LIMELIGHT,      // 15  pipeline and tags
-        PINPOINT,       // 16  odometry pods
+        COLOR,
+        BALLS,
+        LIMELIGHT,
+        PINPOINT,
 
         // ---- TURRET: one block, and it stays together ----
-        DIGITAL,        // 17  limit switch reads
-        ENCODER,        // 18  through-bore is wired
-        PWM_CHECK,      // 19  travel, and the breakaway test
-        LIMIT_POLARITY, // 20  record LIMIT_TRIGGERED_STATE
-        TURRET_SIGN,    // 21  SERVO_SIGN   (eyes only)
-        ENCODER_SIGN,   // 22  ENCODER_SIGN + ticks/rev
-        TURRET_ZERO,    // 23  SERVO_AT_ZERO, HOME_OFFSET_DEG
-        HOME,           // 24  the real homing sequence
-        TURRET,         // 25  closed loop, settle times
+        DIGITAL,
+        ENCODER,
+        PWM_CHECK,
+        LIMIT_POLARITY,
+        TURRET_SIGN,
+        ENCODER_SIGN,
+        TURRET_ZERO,
+        HOME,
+        TURRET,
 
         // ---- GATES: needs the turret and a drivetrain ----
-        RANGE,          // 26  flower approach bands
-        FIRE,           // 27  fire gates
-        FLOWERSHOT,     // 28  flower setpoints
-        CELLSHOT,       // 29  fire at a real CELL, set SHOOTER_EFF_*
+        RANGE,
+        FIRE,
+        FLOWERSHOT,
+        CELLSHOT,
 
-        DUMP            // 30  paste-ready output
+        DUMP
     }
 
-    // Which block a step belongs to, shown in the header so you always know
     private static String section(Step s) {
         switch (s) {
             case DEVICES: case DIRECTION: case SERVO_LIMITS:
@@ -104,11 +101,9 @@ public class RobotSetup extends LinearOpMode {
     private Double pollenAt55 = null;
     private Double nectarAt55 = null;
     private Double encoderTicksPerRev = null;
-    // Measured, not guessed.
     private Integer homeMarkTicks = null;
     private Double homeOffsetDeg = null;
 
-    // Mark-and-jog for the servos that have no encoder.
     private Double servoMark = null;
 
     // ---- SERVO_LIMITS: one place to find every servo's mechanical stops ----
@@ -116,10 +111,8 @@ public class RobotSetup extends LinearOpMode {
     private String[] servoNames;
     private double[] servoPos;
     private Double[] servoLo, servoHi;
-    // For the turret only: the ENCODER reading at each recorded end.
     private Integer turretLoTicks = null, turretHiTicks = null;
 
-    // The real homing sequence, run from here so the whole chain can
     private TurretController turret;
     private boolean homing = false;
 
@@ -133,7 +126,6 @@ public class RobotSetup extends LinearOpMode {
     private String[] dirNames;
     private double dirPower = 0.20;
     private int dirZero = 0;
-    // Per-motor loop mode on the DIRECTION step.
     private boolean[] dirOpen;
     private long dirCmdMs = 0;
     private double dirCmdPower = 0;
@@ -161,19 +153,16 @@ public class RobotSetup extends LinearOpMode {
     private double dipRpm = 2650;
     private boolean dipNectar = false;
 
-    // Measuring what a ball ACTUALLY costs the flywheel.
-    private final int[]   colLvlBall  = new int[6];   // brightest (ball on)
-    private final int[]   colLvlEmpty = new int[6];   // dimmest (throat empty)
-    private final float[] colHue = new float[6];      // hue at the brightest point
+    private final int[]   colLvlBall  = new int[6];
+    private final int[]   colLvlEmpty = new int[6];
+    private final float[] colHue = new float[6];
     private final float[] colSat = new float[6];
     private final float[] colVal = new float[6];
-    private final float[] colHueEmpty = new float[6]; // hue with nothing there
-    // Distance swing per sensor.
+    private final float[] colHueEmpty = new float[6];
     private final double[] colDistMin = new double[6];
     private final double[] colDistMax = new double[6];
     private boolean colArmed = false;
 
-    // The camera is started LAZILY, on first arrival at step 14, not at init.
     private boolean camTried = false;
     private String camError = null;
     { for (int i = 0; i < 6; i++) {
@@ -182,7 +171,6 @@ public class RobotSetup extends LinearOpMode {
           colDistMax[i] = -Double.MAX_VALUE;
       } }
 
-    // Step 14 capture, per ball type, per HSV channel.
     private final double[][] ballLo = new double[3][3];
     private final double[][] ballHi = new double[3][3];
     private final int[] ballSamples = new int[3];
@@ -196,7 +184,6 @@ public class RobotSetup extends LinearOpMode {
     private double dipBaseline = 0, dipMinSeen = 1e9;
     private Double dipMeasured = null;
 
-    // How long the wheel takes to climb back after a ball.
     private long dipMinMs = 0;
     private Long dipRecoverMs = null;
     private boolean dipRecoverWatch = false;
@@ -210,11 +197,9 @@ public class RobotSetup extends LinearOpMode {
 
     public static double SIGN_TEST_DEG = 30.0;
 
-    // PWM_CHECK ramps instead of jumping.
-    public static double PWM_RAMP_PER_LOOP = 0.0030;   // ~2.7 deg of turret
+    public static double PWM_RAMP_PER_LOOP = 0.0030;
     private Double pwmTarget = null;
 
-    // The turret's REAL band.
     private static double turretPosMin() {
         return TurretController.SERVO_AT_ZERO
                 - TurretController.TURRET_LIMIT_DEG / TurretController.TURRET_TRAVEL_DEG;
@@ -225,14 +210,10 @@ public class RobotSetup extends LinearOpMode {
     }
 
     // ---- CELLSHOT ----------------------------------------------------------
-    // Hand-place the robot on the preset and fire at the real cell. The pose
-    // is a number you select, not odometry, so nothing has to be seeded. The
-    // turret covers the bearing, which is why the heading does not have to be
-    // the match preset's -- 90 and 270 are what a tape measure can set.
     // 0,1,2 = NEAR/MID/FAR calibration stands, 3,4 = the two match presets
     private int csPreset = 0;
-    private int csAlliance = 0;      // 0 = RED, 1 = BLUE
-    private int csBall = 0;          // 0 = POLLEN, 1 = NECTAR
+    private int csAlliance = 0;
+    private int csBall = 0;
     private double csYaw = 90.0;
     private boolean csLive = false;
     private boolean csFeeding = false;
@@ -244,18 +225,9 @@ public class RobotSetup extends LinearOpMode {
     private static final double[] CS_DEFAULT_YAW =
             { 90.0, 90.0, 90.0, 90.0, 270.0 };
 
-    // NEAR/MID/FAR stand dead in line with the AUDIENCE cell, facing it, this
-    // far back from the point directly beneath it. One straight tape down the
-    // field places all three. Chosen to land on 24.5, 30.4 and 36.4 in of
-    // range -- the widest spread the table allows with both balls above 89%,
-    // since 21-23 and 38+ fail for nectar.
-    private static final double[] CS_BACK_IN = { 27.7, 33.8, 39.8 };
-    // What you saw, in inches of RANGE, measured parallel to the floor.
-    // Positive is LONG.
+    private static final double[] CS_BACK_IN = { 24.62, 30.72, 36.72 };
     private double csMiss = 0.0;
     private final ArrayList<String> csRows = new ArrayList<>();
-    // How long the belt actually ran for the last shot, which is the
-    // measurement FEED_RUN_MS still needs.
     private long csLastFeedMs = 0;
 
     private ShooterAdapter csShooter() {
@@ -274,9 +246,7 @@ public class RobotSetup extends LinearOpMode {
 
     private Pose csPose() {
         if (csPreset < 3) {
-            // Offset so the POLLEN BARREL is in line with the cell, matching
             // the match poses -- pollen turret 0.00, so calibration happens
-            // under the same lash-free conditions the robot shoots in.
             ShooterAdapter.Target t = csTarget();
             return new Pose(csShooter().goalX(t) - ShooterRed.AXIS_LAT,
                             csShooter().goalY(t) - CS_BACK_IN[csPreset],
@@ -315,7 +285,7 @@ public class RobotSetup extends LinearOpMode {
     private void csStart() {
         ShooterAdapter.Shot s = csShot();
         if (!s.valid) {
-            note = "no solution: range outside 15-39 in, or under 89%";
+            note = "no solution: range outside 15-46 in, or under 89%";
             return;
         }
         csMotor().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
@@ -331,8 +301,6 @@ public class RobotSetup extends LinearOpMode {
         stopShooters();
     }
 
-    // Held, not pulsed: the belt has to carry the ball the whole way up the
-    // tunnel, and that distance is not reliably a tick count.
     private void csFeed(boolean on) {
         if (on == csFeeding) return;
         csFeeding = on;
@@ -356,17 +324,12 @@ public class RobotSetup extends LinearOpMode {
 
     private void serviceCellShot() {
         if (step != Step.CELLSHOT) { csFeed(false); return; }
-        // Y is read here, held, rather than on its rising edge.
         csFeed(csLive && gamepad1.y);
         ShooterAdapter.Shot s = csShot();
         if (!s.valid) {
             if (csLive) { csStop(); note = "lost the solution -- change the stand"; }
             return;
         }
-        // Hood and turret follow the knobs the moment you turn them, whether
-        // or not the flywheel is running. Only the wheel waits for A -- every
-        // other step on this tool drives its servo as soon as you jog it, and
-        // a trim that moves nothing until you spin up reads as a dead knob.
         if (csBall == 0) {
             robot.hoodPollen.setPosition(clamp01(HoodMap.pollenPos(s.hoodDeg)));
         } else {
@@ -396,7 +359,7 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addLine("");
         if (!s.valid) {
             telemetry.addLine("NO SOLUTION for this ball from here.");
-            telemetry.addLine("Needs 15-39 in of range at 89% or better.");
+            telemetry.addLine("Needs 15-46 in of range at 89% or better.");
         } else {
             double trim = csBall == 0 ? ShooterRed.HOOD_TRIM_POLLEN
                                       : ShooterRed.HOOD_TRIM_NECTAR;
@@ -616,8 +579,6 @@ public class RobotSetup extends LinearOpMode {
                         () -> csBall, v -> csBall = (int) v),
                 new Knob("here", "miss (+long)", "%+.1f in", 1.0, 0.5, -24, 24,
                         () -> csMiss, v -> csMiss = v),
-                // One row, not two: a POLLEN trim while NECTAR is selected
-                // moves nothing, which reads as a broken knob.
                 new Knob("ShooterRed", "hood trim (this ball)", "%+.1f deg", 1.0, 0.5, -20, 20,
                         () -> csBall == 0 ? ShooterRed.HOOD_TRIM_POLLEN
                                           : ShooterRed.HOOD_TRIM_NECTAR,
@@ -633,9 +594,6 @@ public class RobotSetup extends LinearOpMode {
                         () -> csAlliance, v -> csAlliance = (int) v),
                 new Knob("here", "heading", "%.0f deg", 5, 1, 0, 359,
                         () -> csYaw, v -> csYaw = v),
-                // Positive is LEFT, so a turret aiming left of the cell wants
-                // this negative. The turret is open loop, so a constant
-                // offset is the likeliest fault and this is where it lives.
                 new Knob("ShooterRed", "AIM_TRIM_DEG", "%+.1f deg", 1.0, 0.2, -30, 30,
                         () -> ShooterRed.AIM_TRIM_DEG,
                         v -> ShooterRed.AIM_TRIM_DEG = v),
@@ -681,7 +639,6 @@ public class RobotSetup extends LinearOpMode {
                                robot.flowerIntake, robot.conveyorPollen, robot.conveyorNectar };
         servoNames = new String[] { "turretRot", "hoodPollen", "hoodNectar",
                                     "flowerIntake", "conveyorPollen", "conveyorNectar" };
-        // Start each one where the robot already believes it should be.
         servoPos = new double[] {
                 TurretController.SERVO_AT_ZERO,
                 HoodMap.POLLEN_POS_AT_55,
@@ -693,7 +650,6 @@ public class RobotSetup extends LinearOpMode {
         servoHi = new Double[servos.length];
 
         dirOpen = new boolean[dirMotors.length];
-        // intakeMot's encoder port carries the TURRET through-bore, so its own
         dirOpen[0] = true;
 
         telemetry.addLine("ROBOT SETUP -- 29 steps, dpad L/R to walk them.");
@@ -714,10 +670,8 @@ public class RobotSetup extends LinearOpMode {
             boolean a=gamepad1.a, b=gamepad1.b, x=gamepad1.x, y=gamepad1.y;
             boolean lb=gamepad1.left_bumper, rb=gamepad1.right_bumper, bk=gamepad1.back;
 
-            // Leaving a step stops whatever it was driving.
             boolean leaving = (l && !pL) || (r && !pR);
             if (leaving) { stopEverything(); pwmTarget = null; }
-            // Changing the selected row on DIRECTION leaves the motor you were
             if (step == Step.DIRECTION && ((u && !pU) || (d && !pD))) stopDirectionMotors();
 
             if (l && !pL) { step = prev(step); sel = 0; note = ""; servoMark = null; resetEnc(); }
@@ -729,7 +683,6 @@ public class RobotSetup extends LinearOpMode {
             if (d && !pD) sel = (sel + 1) % n;
             if (step == Step.BEDS) bedPattern = sel % 4;
 
-            // Any deliberate input halts a ramp in progress.
             if (pwmTarget != null && (u || d || l || r || lb || rb || y
                     || gamepad1.left_trigger > 0.5 || gamepad1.right_trigger > 0.5)) {
                 pwmTarget = null;
@@ -759,7 +712,6 @@ public class RobotSetup extends LinearOpMode {
         if (vision != null) vision.stop();
     }
 
-    // How many selectable rows a step has, so dpad U/D wraps correctly.
     private int rows(Step s) {
         switch (s) {
             case HOME:         return 2;
@@ -781,15 +733,12 @@ public class RobotSetup extends LinearOpMode {
         }
     }
 
-    // Only command a servo while its own step is selected.
     private int servoIdx() { return sel % servos.length; }
 
     private void push() {
-        // While homing, TurretController owns turretRot.
         if (homing) return;
         switch (step) {
             case SERVO_LIMITS:
-                // ONLY the selected one.
                 servos[servoIdx()].setPosition(clamp01(servoPos[servoIdx()]));
                 break;
             case PWM_CHECK:
@@ -815,12 +764,10 @@ public class RobotSetup extends LinearOpMode {
         switch (step) {
             case HOME:
                 if ((sel % 2) == 0) {
-                    // The search only sweeps +/-SEARCH_SPAN_DEG looking
                     TurretController.SEARCH_SPAN_DEG = clampR(
                             TurretController.SEARCH_SPAN_DEG + dir * (fine ? 1.0 : 10.0),
                             5.0, 190.0);
                 } else {
-                    // Where the search STARTS.
                     TurretController.SERVO_AT_ZERO = clampR(
                             TurretController.SERVO_AT_ZERO + dir * (fine ? 0.0020 : 0.0100),
                             0.0, 1.0);
@@ -828,12 +775,10 @@ public class RobotSetup extends LinearOpMode {
                 }
                 break;
             case SERVO_LIMITS:
-                // Per servo, because one step size cannot suit all six.
                 servoPos[servoIdx()] = clamp01(servoPos[servoIdx()]
                         + dir * (fine ? fineStep(servoIdx()) : coarseStep(servoIdx())));
                 break;
             case PWM_CHECK:
-                // The two numbers that DEFINE the band, tuned on the page
                 if ((sel % 2) == 0) {
                     TurretController.TURRET_LIMIT_DEG = clampR(
                             TurretController.TURRET_LIMIT_DEG + dir * (fine ? 1.0 : 5.0),
@@ -863,7 +808,6 @@ public class RobotSetup extends LinearOpMode {
             case SHOOTER:
                 switch (sel % 5) {
                     case 0: targetRpm = clampR(targetRpm + dir * (fine ? 25 : 250), 0, 6500); break;
-                    // Halved on 14 Nov: the old fine step of 0.1 on P could
                     case 1: kP = clampR(kP + dir * (fine ? 0.05 : 0.5), 0, 200); applyPidf(); break;
                     case 2: kI = clampR(kI + dir * (fine ? 0.005 : 0.05), 0, 50); applyPidf(); break;
                     case 3: kD = clampR(kD + dir * (fine ? 0.05 : 0.5), 0, 200); applyPidf(); break;
@@ -935,14 +879,11 @@ public class RobotSetup extends LinearOpMode {
                 break;
             case LIMIT_POLARITY:
                 limitAtHome = robot.magneticLimitSwitch.getState();
-                // The last of the four: applied live so homing on step 11 uses
                 TurretController.LIMIT_TRIGGERED_STATE = limitAtHome;
                 note = "recorded: switch reads " + limitAtHome + " AT HOME";
                 break;
             case TURRET_SIGN:
-                // A RECORDS what you saw.
                 turretSign = (turretSign != null && turretSign > 0) ? -1 : +1;
-                // Applied live for the same reason as ENCODER_SIGN: every
                 TurretController.SERVO_SIGN = turretSign;
                 note = "SERVO_SIGN = " + String.format(Locale.US, "%+d", turretSign)
                      + "   (A toggles, Y re-runs the move)";
@@ -958,7 +899,6 @@ public class RobotSetup extends LinearOpMode {
                             + " switch, press Y to mark, jog back here, press A.",
                             turretZero);
                 } else {
-                    // Angle OF THE SWITCH, measured from here (true forward).
                     homeOffsetDeg = TurretController.ENCODER_SIGN
                             * (homeMarkTicks - robot.intakeMot.getCurrentPosition())
                             * 360.0 / TurretController.ENCODER_TICKS_PER_REV;
@@ -1041,7 +981,7 @@ public class RobotSetup extends LinearOpMode {
                         servoIdx() == 0 ? "  (encoder " + turretHiTicks + ")" : "");
                 break;
             case HOME:
-                startHoming(true);          // skip VERIFY, sweep for the magnet
+                startHoming(true);
                 break;
             case PWM_CHECK:
                 pwmTarget = turretPosMax();
@@ -1086,10 +1026,9 @@ public class RobotSetup extends LinearOpMode {
     private void actionX() {
         switch (step) {
             case DIRECTION:
-                // X also RE-ARMS closed loop.
                 dirMotor().setPower(0);
                 dirCmdActive = false;
-                dirOpen[dirIdx()] = (dirIdx() == 0);   // intakeMot stays open
+                dirOpen[dirIdx()] = (dirIdx() == 0);
                 note = "stopped, " + dirNames[dirIdx()]
                      + " re-armed " + (dirIdx() == 0 ? "open" : "closed") + " loop";
                 break;
@@ -1098,7 +1037,6 @@ public class RobotSetup extends LinearOpMode {
                 note = "homing abandoned, turret held where it is";
                 break;
             case PWM_CHECK:
-                // First press HALTS -- if cables are snagging, more travel
                 if (pwmTarget != null) {
                     pwmTarget = null;
                     note = String.format(Locale.US, "HALTED at %.4f", turretPos);
@@ -1122,19 +1060,15 @@ public class RobotSetup extends LinearOpMode {
                 resetSpread(); note = "spread reset";
                 break;
             case COLOR:
-                // Clears all six, because capture now fills all six.
                 for (int k = 0; k < 6; k++) resetColor(k);
                 note = "capture cleared, all six";
                 break;
             case BALLS:
-                // Re-measure every gate after flipping: red and blue trade
                 BallDetector.FRAME_IS_BGR = !BallDetector.FRAME_IS_BGR;
                 note = "reading frames as " + (BallDetector.FRAME_IS_BGR ? "BGR" : "RGB")
                      + " -- re-measure all three gates";
                 break;
             case CELLSHOT:
-                // The other flywheel is a different barrel at a different
-                // range, so the one that was spinning has to stop.
                 csStop();
                 csBall = 1 - csBall;
                 note = (csBall == 0 ? "POLLEN" : "NECTAR") + " selected -- A to spin up";
@@ -1146,7 +1080,6 @@ public class RobotSetup extends LinearOpMode {
     private void actionY() {
         switch (step) {
             case DIRECTION: {
-                // setDirection flips the encoder sign with the power sign
                 DcMotor m = dirMotor();
                 m.setPower(0);
                 m.setDirection(m.getDirection() == DcMotor.Direction.FORWARD
@@ -1169,7 +1102,6 @@ public class RobotSetup extends LinearOpMode {
                         : "capture paused";
                 break;
             case BALLS:
-                // No detector means the portal never came up, so arming
                 if (vision.getBallDetector() == null) {
                     camTried = false;
                     ensureCamera();
@@ -1185,18 +1117,15 @@ public class RobotSetup extends LinearOpMode {
                     note = "spin the wheel first with A, then Y to feed a ball";
                     break;
                 }
-                // Baseline BEFORE the belt moves, so the dip is measured
                 dipBaseline = dipMotor().getVelocity();
                 dipMinSeen = dipBaseline;
                 dipMeasured = null;
                 dipCapture = true;
                 dipCaptureMs = System.currentTimeMillis();
                 dipChain = true;
-                // CONTINUOUS, not a fixed tick count.
                 robot.conveyorMot.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
                 robot.conveyorMot.setPower(1.0);
                 robot.intakeMot.setPower(1.0);
-                // Engage the bed for the tunnel under test, or the ball has
                 if (dipNectar) conveyorNectarBed(true); else conveyorPollenBed(true);
                 note = String.format(Locale.US,
                         "intake + belt running, baseline %.0f ticks/s", dipBaseline);
@@ -1206,7 +1135,6 @@ public class RobotSetup extends LinearOpMode {
                 runSignTest();
                 break;
             case TURRET_ZERO:
-                // Mark the switch.
                 boolean atSwitch = robot.magneticLimitSwitch.getState()
                         == TurretController.LIMIT_TRIGGERED_STATE;
                 if (!atSwitch) {
@@ -1219,7 +1147,6 @@ public class RobotSetup extends LinearOpMode {
                      + " ticks. Now jog to TRUE FORWARD and press A.";
                 break;
             case CELLSHOT:
-                // Serviced while HELD, so nothing to do on the edge.
                 if (!csLive) note = "press A to spin up first";
                 break;
             case SHOOTER:
@@ -1236,7 +1163,6 @@ public class RobotSetup extends LinearOpMode {
                      + " first. Press A to home.";
                 break;
             default:
-                // On SERVO_LIMITS the turret row homes instead of marking
                 if (step == Step.SERVO_LIMITS && servoIdx() == 0) {
                     startHoming(false);
                     break;
@@ -1258,7 +1184,6 @@ public class RobotSetup extends LinearOpMode {
 
     // ---- the sign test -----------------------------------------------------
     private void runSignTest() {
-        // Step toward whichever end has room, like the breakaway test.
         final double mag = SIGN_TEST_DEG / TurretController.TURRET_TRAVEL_DEG;
         int sdir = (turretPosMax() - turretPos) >= (turretPos - turretPosMin()) ? +1 : -1;
         final double dPos = sdir * mag;
@@ -1309,7 +1234,6 @@ public class RobotSetup extends LinearOpMode {
             return;
         }
 
-        // ENCODER_SIGN relates ticks to COMMANDED degrees, so it must
         encoderSign = (dTicks * sdir) > 0 ? +1 : -1;
         encoderTicksPerRev = Math.abs(dTicks) * 360.0 / SIGN_TEST_DEG;
         // APPLY it, do not just record it.
@@ -1345,7 +1269,6 @@ public class RobotSetup extends LinearOpMode {
         }
         if (feedRunning && !robot.conveyorMot.isBusy()) {
             feedRunning = false;
-            // A dip capture owns the note until it finishes -- otherwise
             if (!dipCapture) {
                 note = String.format(Locale.US, "feed done: %d ticks in %d ms",
                         robot.conveyorMot.getCurrentPosition() - feedStartPos,
@@ -1373,7 +1296,6 @@ public class RobotSetup extends LinearOpMode {
             if (v < dipMinSeen) { dipMinSeen = v; dipMinMs = System.currentTimeMillis(); }
             if (System.currentTimeMillis() - dipCaptureMs > DIP_CAPTURE_MS) {
                 dipCapture = false;
-                // Chain keeps running -- B stops it.
                 dipMeasured = dipBaseline - dipMinSeen;
                 dipRecoverMs = null;
                 dipRecoverWatch = true;
@@ -1407,7 +1329,6 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addLine(String.format(Locale.US, "%d/%d  [%s]  %s",
                 step.ordinal() + 1, Step.values().length, section(step), step));
         telemetry.addLine(hint(step));
-        // The note goes FIRST.
         if (!note.isEmpty()) {
             telemetry.addLine("");
             telemetry.addLine("> " + note);
@@ -1493,7 +1414,6 @@ public class RobotSetup extends LinearOpMode {
         dirCmdActive = false;
     }
 
-    // Drive the selected motor, CLOSED loop unless we already know better.
     private void startDirection(int sign) {
         int i = dirIdx();
         DcMotor m = dirMotors[i];
@@ -1515,7 +1435,6 @@ public class RobotSetup extends LinearOpMode {
                 dirOpen[i] ? "open loop" : "closed loop");
     }
 
-    // A DIRECTION check must not depend on an encoder -- but it must
     private void serviceHoming() {
         if (!homing) return;
         turret.update();
@@ -1550,18 +1469,11 @@ public class RobotSetup extends LinearOpMode {
                            turretPosMin(), turretPosMax());
     }
 
-    // How much command error the turret needs before it moves at all.
-    public static double BREAKAWAY_STEP = 0.0005;    // 0.45 deg of turret
-    public static int BREAKAWAY_MAX_STEPS = 100;     // up to 45 deg
+    public static double BREAKAWAY_STEP = 0.0005;
+    public static int BREAKAWAY_MAX_STEPS = 100;
 
-    // Backlash, measured off the through-bore rather than by eye.
-    //
-    // Creep the servo one way until the encoder actually moves, which takes
-    // the lash up on that side. Reverse and creep back until it moves again.
-    // The servo travel between those two points IS the lash: over it, the
-    // servo turned and the turret did not.
     public static double LASH_STEP = 0.0005;
-    public static int LASH_TICKS = 60;        // 2.6 deg, far under the 12 deg seen
+    public static int LASH_TICKS = 60;
     public static int LASH_MAX_STEPS = 400;
     private Double lashPos = null;
 
@@ -1584,9 +1496,6 @@ public class RobotSetup extends LinearOpMode {
         }
 
         lashPos = Math.abs(edgeB - edgeA);
-        // Report BOTH legs. If the turret is resting on one edge of a fixed
-        // band, the first leg equals the lash. When it does not, the band
-        // has moved since the last run and the number is not backlash.
         double leg1 = Math.abs(start - edgeA);
         double deg = TurretController.TURRET_TRAVEL_DEG;
         note = String.format(Locale.US,
@@ -1596,8 +1505,6 @@ public class RobotSetup extends LinearOpMode {
                 Math.abs(leg1 - lashPos) * deg < 3.0 ? "consistent" : "LEGS DISAGREE");
     }
 
-    // Steps until the encoder has moved LASH_TICKS from where it sat when
-    // this call started. Null means it never moved.
     private Double creepToMotion(double from, int dir) {
         int t0 = robot.intakeMot.getCurrentPosition();
         double p = from;
@@ -1617,7 +1524,6 @@ public class RobotSetup extends LinearOpMode {
         double p0 = turretPos;
         pwmTarget = null;
 
-        // Step toward whichever end has room.
         int dir = (turretPosMax() - p0) >= (p0 - turretPosMin()) ? +1 : -1;
         double room = dir > 0 ? turretPosMax() - p0 : p0 - turretPosMin();
         double need = BREAKAWAY_STEP * BREAKAWAY_MAX_STEPS;
@@ -1674,7 +1580,6 @@ public class RobotSetup extends LinearOpMode {
                 : Math.min(dirCmdPower, -DIR_OPEN_LOOP_MIN_POWER);
         m.setPower(p);
         dirCmdPower = p;
-        // Say what was OBSERVED, not what it means.
         note = dirNames[i] + ": nothing moved in " + DIR_FALLBACK_MS
              + "ms, now OPEN LOOP at " + String.format(Locale.US, "%.2f", Math.abs(p))
              + ". Dead encoder OR stalled motor -- turn it BY HAND:"
@@ -1707,32 +1612,20 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addLine("Y is live only -- edit RobotHardware to keep it.");
     }
 
-    // Degrees of output travel per 1.0 of servo position, per servo.
-    public static double TURRET_COARSE_STEP = 0.0300;   // 27 deg of turret
-    public static double TURRET_FINE_STEP   = 0.0100;   //  9 deg
+    public static double TURRET_COARSE_STEP = 0.0300;
+    public static double TURRET_FINE_STEP   = 0.0100;
 
-    // Jog in DEGREES OF OUTPUT, not servo position: 1 deg of hood is a
-    // different position step from 1 deg of turret, and the output angle is
-    // what you are actually trying to land on.
-    //
-    // Triggers repeat every loop while held, so 0.01 deg is a smooth ramp
-    // rather than a step too small to see. Bumpers are edge-detected, so
-    // each press is exactly one degree.
     public static double FINE_STEP_DEG   = 0.01;
     public static double COARSE_STEP_DEG = 1.0;
 
     private double coarseStep(int i) { return stepFor(i, COARSE_STEP_DEG, 0.0100); }
     private double fineStep(int i)   { return stepFor(i, FINE_STEP_DEG,   0.0020); }
 
-    // Falls back to position units for a servo with no known output ratio,
-    // which is flowerIntake.
     private double stepFor(int i, double deg, double fallbackPos) {
         double dpu = servoDegPerUnit(i);
         return dpu > 0 ? deg / dpu : fallbackPos;
     }
 
-    // Output angle at the current position, for the three servos whose
-    // mapping is known. NaN means there is no mapping to show.
     private double servoDeg(int i, double pos) {
         switch (i) {
             case 0: return TurretController.SERVO_SIGN
@@ -1746,12 +1639,12 @@ public class RobotSetup extends LinearOpMode {
 
     private double servoDegPerUnit(int i) {
         switch (i) {
-            case 0: return TurretController.TURRET_TRAVEL_DEG;   // 900
-            case 1: return 1.0 / HoodMap.POLLEN_POS_PER_DEG;     // 227.8
-            case 2: return 1.0 / HoodMap.NECTAR_POS_PER_DEG;     // 194.3
+            case 0: return TurretController.TURRET_TRAVEL_DEG;
+            case 1: return 1.0 / HoodMap.POLLEN_POS_PER_DEG;
+            case 2: return 1.0 / HoodMap.NECTAR_POS_PER_DEG;
             case 4:
-            case 5: return MechController.MAX_CONVEYOR_ROTATION; // 300
-            default: return 0;                                   // flowerIntake
+            case 5: return MechController.MAX_CONVEYOR_ROTATION;
+            default: return 0;
         }
     }
 
@@ -1775,11 +1668,9 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addData("step", "bumpers %.4f   triggers %.4f   (no ratio)",
                     coarseStep(i), fineStep(i));
         }
-        // The turret is the one servo with an encoder on its output.
         if (i == 0) {
             int now = robot.intakeMot.getCurrentPosition();
             telemetry.addData("turret encoder", "%d ticks", now);
-            // MEASURED span, from the output.
             if (turretLoTicks != null && turretHiTicks != null) {
                 double deg = Math.abs(turretHiTicks - turretLoTicks)
                         * 360.0 / TurretController.ENCODER_TICKS_PER_REV;
@@ -1830,7 +1721,6 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addData("measured deg", "%.1f", turret.getMeasuredDeg());
         telemetry.addData("encoder ticks", turret.getRawEncoderTicks());
         telemetry.addLine("");
-        // These three are what homing CONSUMES.
         telemetry.addData("SERVO_AT_ZERO", "%.4f", TurretController.SERVO_AT_ZERO);
         telemetry.addData("SERVO_SIGN", "%+d", TurretController.SERVO_SIGN);
         telemetry.addData("LIMIT_TRIGGERED_STATE", TurretController.LIMIT_TRIGGERED_STATE);
@@ -1892,7 +1782,6 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addLine("Record it on the next step.");
     }
 
-    // Has the encoder EVER moved while this page was open?
     private int encMin = Integer.MAX_VALUE, encMax = Integer.MIN_VALUE;
 
     private void resetEnc() { encMin = Integer.MAX_VALUE; encMax = Integer.MIN_VALUE; }
@@ -1944,7 +1833,6 @@ public class RobotSetup extends LinearOpMode {
                 telemetry.addLine("  1. jog until 'limit switch raw' flips, press Y");
                 telemetry.addLine("  2. jog to TRUE FORWARD, press A");
             } else {
-                // Live, so the number is visible while you are still jogging.
                 double deg = TurretController.ENCODER_SIGN
                         * (homeMarkTicks - robot.intakeMot.getCurrentPosition())
                         * 360.0 / TurretController.ENCODER_TICKS_PER_REV;
@@ -1989,7 +1877,6 @@ public class RobotSetup extends LinearOpMode {
         results();
     }
 
-    // The position a mark refers to on this step.
     private double markableValue(Step s) {
         switch (s) {
             case HOOD_POLLEN: return pollenHoodPos;
@@ -2001,11 +1888,10 @@ public class RobotSetup extends LinearOpMode {
         }
     }
 
-    // Degrees of OUTPUT travel per 1.0 of servo position, where a ratio
     private double degPerUnit(Step s) {
         switch (s) {
-            case HOOD_POLLEN: return 1.0 / HoodMap.POLLEN_POS_PER_DEG;   // 227.8
-            case HOOD_NECTAR: return 1.0 / HoodMap.NECTAR_POS_PER_DEG;   // 194.3
+            case HOOD_POLLEN: return 1.0 / HoodMap.POLLEN_POS_PER_DEG;
+            case HOOD_NECTAR: return 1.0 / HoodMap.NECTAR_POS_PER_DEG;
             default:          return 0;
         }
     }
@@ -2033,7 +1919,6 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addData("mark was at", "%.4f", servoMark);
     }
 
-    // Step 3 surveys the room; steps 5, 6, 9 and 10 choose endpoints inside
     private String limitWarn(int idx, double v) {
         if (idx < 0 || idx >= servos.length) return "";
         Double lo = servoLo[idx], hi = servoHi[idx];
@@ -2130,7 +2015,6 @@ public class RobotSetup extends LinearOpMode {
                 double tps = dipMotor().getVelocity();
                 double target = RobotHardware.rpmToTicksPerSec(dipRpm);
                 double trip = target * (1.0 - MechController.DIP_ENTER);
-                // Use the MEASURED ball cost once Y has taken one.
                 double ball = (dipMeasured != null) ? dipMeasured : target * 0.031;
                 double spread = (vMax >= vMin) ? (vMax - vMin) : 0;
                 telemetry.addData(dipNectar ? "nectar" : "pollen",
@@ -2144,7 +2028,6 @@ public class RobotSetup extends LinearOpMode {
                             ? "!! trip >= ball: a real ball will be MISSED"
                             : "usable: spread < trip < ball"));
                 telemetry.addLine("");
-                // The 'ball' figure above is an ESTIMATE (3.1% of target).
                 if (dipCapture) {
                     telemetry.addData("MEASURING", "baseline %.0f   low so far %.0f",
                             dipBaseline, dipMinSeen);
@@ -2241,7 +2124,6 @@ public class RobotSetup extends LinearOpMode {
         telemetry.addData("commanded", "%.0f ticks/s",
                 RobotHardware.rpmToTicksPerSec(targetRpm));
         telemetry.addLine("");
-        // A number beats eyeballing a jittery readout.
         telemetry.addData("spread (2s)", "%.0f ticks/s   [%.0f .. %.0f]  %s",
                 (vMax - vMin), vMin, vMax,
                 (vMax - vMin) < 30 ? "steady" : (vMax - vMin) > 100 ? "HUNTING" : "");
@@ -2277,25 +2159,19 @@ public class RobotSetup extends LinearOpMode {
             android.graphics.Color.RGBToHSV(r * 255 / max, g * 255 / max, bl * 255 / max, hsv);
         }
 
-        // Capture BRIGHTNESS, not distance.
         int level = r + g + bl;
-        // While armed, capture ALL SIX, not just the selected row.
         if (colArmed) {
             for (int k = 0; k < s.length; k++) captureColor(s[k], k);
         }
 
-        // Mirror readColor EXACTLY: the distance gate first, then the hue.
         boolean present = dist < VisionController.DISTANCE_BALL_MM;
         int verdict = present ? VisionController.classify(hsv[0], hsv[1], hsv[2]) : 0;
 
-        // THE reading that matters: this is what readColor gates on.
         telemetry.addData("distance", "%.1f mm   %s   (gate %.0f)",
                 dist, present ? "BALL" : "empty", VisionController.DISTANCE_BALL_MM);
         telemetry.addData("level", "%d", level);
-        // The hue is computed whether or not the gate passed, so you can see
         telemetry.addData("hsv", "%.0f / %.2f / %.2f  -> %s",
                 hsv[0], hsv[1], hsv[2], VisionController.colorName(verdict));
-        // ALPHA is the clear channel -- total light, no colour.
         telemetry.addData("rgb + alpha", "%d / %d / %d   a %d", r, g, bl, s[i].alpha());
         telemetry.addLine("");
 
@@ -2308,7 +2184,6 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addData("ball", "level %d   H %.0f  S %.2f  V %.2f",
                     colLvlBall[i], colHue[i], colSat[i], colVal[i]);
             telemetry.addData("empty", "level %d", colLvlEmpty[i]);
-            // Swing is the only pass/fail here.
             if (swing < 5) {
                 telemetry.addLine("distance never moved -- check this sensor's");
                 telemetry.addLine("cable and its config port before anything else.");
@@ -2317,20 +2192,17 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addLine("nothing captured yet -- press Y");
         }
 
-        // All six at a glance, so one pass tells you which are wired.
         telemetry.addLine("");
         for (int k = 0; k < s.length; k++) {
             if (colLvlBall[k] <= 0) continue;
             double swing = (colDistMax[k] <= -Double.MAX_VALUE ? 0 : colDistMax[k])
                          - (colDistMin[k] >= Double.MAX_VALUE ? 0 : colDistMin[k]);
-            // Swing is the verdict.
             telemetry.addLine(String.format(Locale.US, "%-8s swing %5.1fmm  lvl %5d%s",
                     n[k], swing, colLvlBall[k],
                     swing < 5 ? "  NOT WIRED?" : ""));
         }
     }
 
-    // Build the VisionPortal if it is not up yet.
     private void ensureCamera() {
         if (vision.getBallDetector() != null || camTried) return;
         camTried = true;
@@ -2345,7 +2217,6 @@ public class RobotSetup extends LinearOpMode {
         }
     }
 
-    // One sensor's contribution to the capture.
     private void captureColor(RevColorSensorV3 sensor, int k) {
         double d = sensor.getDistance(DistanceUnit.MM);
         if (!Double.isNaN(d) && !Double.isInfinite(d)) {
@@ -2365,7 +2236,6 @@ public class RobotSetup extends LinearOpMode {
         }
         if (level < colLvlEmpty[k]) {
             colLvlEmpty[k] = level;
-            // Hue of the EMPTY throat.
             colHueEmpty[k] = hsv[0];
         }
     }
@@ -2400,15 +2270,12 @@ public class RobotSetup extends LinearOpMode {
         double[] c = bd.getCentreHsv();
         double[] raw = bd.getCentreRaw();
 
-        // Measuring the ball beats guessing the gate.
         telemetry.addData("centre HSV", "H %.0f  S %.0f  V %.0f", c[0], c[1], c[2]);
-        // Channel-order check.
         telemetry.addData("centre raw", "%.0f/%.0f/%.0f  as %s%s",
                 raw[0], raw[1], raw[2],
                 BallDetector.FRAME_IS_BGR ? "BGR" : "RGB",
                 (raw[0] + raw[1] + raw[2] > 30 && raw[2] > raw[0] + 40)
                         ? "   !! looks SWAPPED, X to flip" : "");
-        // Capture the RANGE, not a sample.
         int ti = ballTypeIdx % 3;
         if (ballArmed && c[2] > 40) {
             for (int ch = 0; ch < 3; ch++) {
@@ -2431,12 +2298,10 @@ public class RobotSetup extends LinearOpMode {
             telemetry.addData("measured", "H %.0f-%.0f  S %.0f-%.0f  V %.0f-%.0f  (%d)",
                     ballLo[ti][0], ballHi[ti][0], ballLo[ti][1], ballHi[ti][1],
                     ballLo[ti][2], ballHi[ti][2], ballSamples[ti]);
-            // Hue padded by 8 either side; S and V floored well under
             telemetry.addData("suggest", "H %.0f-%.0f  S>%.0f  V>%.0f",
                     Math.max(0, ballLo[ti][0] - 8), Math.min(179, ballHi[ti][0] + 8),
                     Math.max(0, ballLo[ti][1] * 0.6), Math.max(0, ballLo[ti][2] * 0.6));
             if (ballHi[ti][0] - ballLo[ti][0] > 40) {
-                // RED legitimately spans the 0/179 seam, so a wide spread
                 telemetry.addLine(t == BallDetector.BallType.NECTAR_RED
                         ? "wraps 0/179 -- set RED1 and RED2 by hand"
                         : "hue spread >40 -- background is in the patch");
@@ -2467,7 +2332,6 @@ public class RobotSetup extends LinearOpMode {
             BallDetector.Detection nd = ds.get(0);
             telemetry.addData("nearest", "%s  %.1f in  %+.1f deg  %.0f px",
                     nd.type, nd.rangeIn, nd.bearingDeg, nd.areaPx);
-            // Predicted from the range, measured from the blob.
             double exp = bd.expectedAreaPx(nd.type, nd.rangeIn, nd.bearingDeg);
             telemetry.addData("size", "expect %.0f px   ratio %.2f  (keep %.2f-%.2f)",
                     exp, exp > 0 ? nd.areaPx / exp : 0,
@@ -2493,7 +2357,6 @@ public class RobotSetup extends LinearOpMode {
             return;
         }
         telemetry.addData("running pipeline", res.getPipelineIndex());
-        // valid / tx / ty describe a PRIMARY TARGET and mean nothing for tag
         telemetry.addData("valid / tx / ty", "%s  %.1f / %.1f   (not used)",
                 res.isValid(), res.getTx(), res.getTy());
         List<LLResultTypes.FiducialResult> tags = res.getFiducialResults();
@@ -2513,10 +2376,8 @@ public class RobotSetup extends LinearOpMode {
     }
 
     private void drawPinpoint() {
-        // The Pinpoint latches and only refreshes on update().
         robot.pinpoint.update();
 
-        // RAW COUNTS ARE THE DIAGNOSTIC.
         telemetry.addLine("Spin each pod by hand: raw counts must move.");
         telemetry.addLine("");
         telemetry.addData("device status", robot.pinpoint.getDeviceStatus());
@@ -2584,7 +2445,6 @@ public class RobotSetup extends LinearOpMode {
         feedStartPos = robot.conveyorMot.getCurrentPosition();
         robot.conveyorMot.setTargetPosition(feedStartPos + feedTargetTicks);
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        // The tunable, not a copy -- a page running at a different power
         robot.conveyorMot.setPower(MechController.CONVEYOR_POWER);
         feedStartMs = System.currentTimeMillis();
         feedRunning = true;
@@ -2597,7 +2457,6 @@ public class RobotSetup extends LinearOpMode {
         feedRunning = false;
     }
 
-    // The flywheel under test on the DIP step.
     private DcMotorEx dipMotor() {
         return dipNectar ? robot.nectarShootingMot : robot.pollenShootingMot;
     }
@@ -2614,7 +2473,6 @@ public class RobotSetup extends LinearOpMode {
         dipMotor().setVelocity(0);
         dipMotor().setPower(0);
         dipSpinning = false;
-        // B stops the WHOLE chain, not just the wheel -- and since the chain
         dipCapture = false;
         if (dipChain) {
             dipChain = false;

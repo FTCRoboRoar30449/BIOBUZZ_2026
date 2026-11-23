@@ -23,10 +23,6 @@ import org.firstinspires.ftc.teamcode.robot.VisionController;
 @TeleOp(name = "TeleopMech RED", group = "Test")
 public class Teleop_MechRed extends OpMode {
 
-
-
-
-    // Autonomous end pose, carried into TeleOp.
     private double seedX, seedY, seedH;
     private boolean seeded = false;
 
@@ -40,32 +36,18 @@ public class Teleop_MechRed extends OpMode {
     private boolean p2a, p2x, p2b, p2y, p2du, p2dd, p2dl, p2dr;
     private boolean p2lb, p2rb, p2bk, p2st, p2lt, p2rt, p2lsb;
 
-    // Drive feel. PRECISION_SCALE is held, not toggled -- a held modifier
     public static double PRECISION_SCALE = 0.35;
-    // Above this on any stick, an automated drive hands back to the driver.
     public static double STICK_CANCEL = 0.15;
 
-    // true rotates the sticks into the field frame; only as good as the heading.
     public static boolean FIELD_CENTRIC = true;
-    public static int LATERAL_SIGN = +1;   // flip if strafe mirrors again
+    public static int LATERAL_SIGN = +1;
 
-    // Where this alliance's driver stands, as a rotation of the stick frame
-    // into the field frame. RED 0, BLUE 180.
     public static double DRIVER_FRAME_DEG = 0;
 
-    // Spin should NOT need this: rotating your viewpoint by 180 deg does not
-    // reverse which way clockwise looks. If BLUE really does spin backwards
-    // after DRIVER_FRAME_DEG is right, the cause is a drivetrain motor
-    // direction, not the driver frame -- flip this to get through a match,
-    // then find the real one in RobotSetup step 2.
     public static int SPIN_SIGN = +1;
 
-    // Name of the pose an automated drive is heading for, or null when
     private String autoTarget = null;
     private String driveNote = "";   // so a button with no motion still reports
-
-    // Spin test: gamepad1 start marks a reference, telemetry then shows how
-    // far pose has drifted and how many turns it took.
 
     @Override public void init() {
         robot   = new RobotHardware(hardwareMap, telemetry);
@@ -77,12 +59,9 @@ public class Teleop_MechRed extends OpMode {
         vision.initAprilTag();
         vision.startHiveAprilTagPipeline();
         mech.setState(MechState.START);
-        // Beds to the resting pattern now, not when an intake state
         mech.initPositions(MatchState.isFresh(Red.ALLIANCE) && MatchState.deployed);
-        // Autonomous already drove off the wall, so the arm is safe to swing.
         mech.armDeploy();
 
-        // Commands the turret to forward and confirms on the limit switch.
         turret.beginHoming();
 
         follower = Constants.create(hardwareMap);
@@ -97,30 +76,25 @@ public class Teleop_MechRed extends OpMode {
         turret.update();
         telemetry.addData("Turret", turret.getHomeMessage());
         telemetry.addData("Press", "gamepad2 RB to search if it did not find home");
-        // Rising edge only: calling beginSearch() every loop would reset
         if (gamepad2.right_bumper && !initRb) turret.beginSearch();
         initRb = gamepad2.right_bumper;
         telemetry.update();
     }
 
     @Override public void start() {
-        // Inherit autonomous's inventory when it ran in this process
         if (MatchState.isFresh(Red.ALLIANCE)) {
             mech.countPollen = MatchState.countPollen;
             mech.countNectar = MatchState.countNectar;
             mech.cellPollenIn = MatchState.cellPollenIn;
             mech.cellNectarIn = MatchState.cellNectarIn;
-            // Seeded ONCE.
             seedX = MatchState.poseX; seedY = MatchState.poseY;
             seedH = MatchState.headingDeg; seeded = true;
         } else {
-            // WITHOUT THIS the three seed fields keep their Java defaults
             seedX = Red.START.x();
             seedY = Red.START.y();
             seedH = Math.toDegrees(Red.START.heading());
             seeded = false;
         }
-        // Hand the inherited pose to the follower.
         if (follower != null) {
             follower.setPose(new Pose(seedX, seedY, Math.toRadians(seedH)));
         }
@@ -130,22 +104,15 @@ public class Teleop_MechRed extends OpMode {
     @Override public void loop() {
         updatePoseFromSource();
 
-        // ================= GAMEPAD 1 -- DRIVER ===========================
-        // A is the scoring button: go to the best shoot pose and stream.
-        // Y parks -- worth 5 points, and the end of a match is exactly when
         // you do not want to be lining up by hand.
-        // Stick cancels any of them, like any macro.
         boolean a1 = gamepad1.a && !p1a;
         boolean b1 = gamepad1.b && !p1b;
         boolean y1 = gamepad1.y && !p1y;
         if (a1) { driveToNearestShoot(); mech.setState(MechState.SHOOTING_HIVE); }
         if (y1) driveToPose(Red.PARK, "PARK");
-        // You only drive to the GARDEN to collect, so arm the intake too,
-        // same as RB and as gamepad 2's flower button.
         if (b1) { driveToPose(Red.GARDEN, "GARDEN"); mech.setState(MechState.INTAKE_FIELD); }
         p1a = gamepad1.a; p1b = gamepad1.b; p1y = gamepad1.y;
 
-        // Partner cell scoring.
         boolean du1 = gamepad1.dpad_up && !p1du;
         boolean dd1 = gamepad1.dpad_down && !p1dd;
         boolean dl1 = gamepad1.dpad_left && !p1dl;
@@ -154,21 +121,14 @@ public class Teleop_MechRed extends OpMode {
         if (dl1) mech.resetCellCount();
         p1du = gamepad1.dpad_up; p1dd = gamepad1.dpad_down; p1dl = gamepad1.dpad_left;
 
-        // ================= GAMEPAD 2 -- OPERATOR =========================
         boolean a2 = gamepad2.a && !p2a, b2 = gamepad2.b && !p2b;
         boolean x2 = gamepad2.x && !p2x, y2 = gamepad2.y && !p2y;
-        // A and Y drive there as well as arming: the operator owns the whole
-        // action, and gamepad 1 keeps only manual driving.
-        // Fire where the robot already stands -- no drive. The driver owns
-        // the positioning on gamepad 1 A; this is the one to use when the
-        // robot is already lined up, or when a macro would be in the way.
         if (a2) mech.setState(MechState.SHOOTING_HIVE);
         else if (x2) mech.setState(MechState.INTAKE_FIELD);
         else if (y2) { driveToNearestFlower(); mech.setState(MechState.INTAKE_FLOWER); }
         else if (b2) mech.setState(MechState.IDLE);
         p2a = gamepad2.a; p2b = gamepad2.b; p2x = gamepad2.x; p2y = gamepad2.y;
 
-        // Triggers are edge-detected like the buttons.
         boolean lt2 = gamepad2.left_trigger > 0.5;
         boolean rt2 = gamepad2.right_trigger > 0.5;
         if (lt2 && !p2lt) mech.setState(MechState.SHOOTING_FLOWER_POLLEN);
@@ -202,7 +162,6 @@ public class Teleop_MechRed extends OpMode {
         if (st2) turret.beginSearch();
         p2bk = gamepad2.back; p2st = gamepad2.start;
 
-        // Turret trim.
         double trim = gamepad2.right_stick_x;
         if (Math.abs(trim) > 0.2) {
             turret.setTurretDeg(turret.getCommandedDeg() + trim * 2.0);
@@ -210,7 +169,6 @@ public class Teleop_MechRed extends OpMode {
 
         serviceDrive();
         mech.update();
-        // Before allTelemetry(), which calls telemetry.update() --
         telemetry.addData("Mode", "%s%s", FIELD_CENTRIC ? "FIELD centric" : "robot centric",
                 driveNote.isEmpty() ? "" : "   " + driveNote);
         telemetry.addData("Drive", autoTarget != null
@@ -232,9 +190,6 @@ public class Teleop_MechRed extends OpMode {
                     vision.isBallDetectionEnabled() ? "ON" : "OFF",
                     ds.size(), pol, red, blu,
                     BallDetector.SIZE_CHECK ? "ON" : "off");
-            // Pixels through the POLLEN gate BEFORE any shape filter. Large
-            // here with 0 seen means the colour is fine and shape/size is
-            // rejecting; near zero means the HSV gate itself is wrong.
             double[] hsvC = vision.getBallDetector().getCentreHsv();
             telemetry.addData("Gate", "pollen mask %d px (min area %.0f)   centre HSV %.0f %.0f %.0f",
                     vision.getBallDetector().pollenMaskPixels(), BallDetector.MIN_AREA_PX,
@@ -261,7 +216,6 @@ public class Teleop_MechRed extends OpMode {
     }
 
     private void updatePoseFromSource() {
-        // A real follower is the only LIVE source; everything else here
         if (follower != null) {
             Pose p = follower.pose();
             double hd = Math.toDegrees(p.heading());
@@ -270,7 +224,6 @@ public class Teleop_MechRed extends OpMode {
             return;
         }
         mech.updatePose(seedX, seedY, seedH);
-        // The ball detector needs it too, or detections come back with NaN
         vision.setPose(seedX, seedY, seedH);
     }
 
@@ -284,35 +237,22 @@ public class Teleop_MechRed extends OpMode {
     private boolean p1rb = false;
     private boolean seeking = false;
     private String seekWhy = "idle";
-    // Latched text goes stale the moment RB is released, and a stale line
-    // reads exactly like a live one. Stamp it.
     private long seekWhyMs = System.currentTimeMillis();
-    // A fresh follow() cannot be judged idle until the follower has had a
-    // few cycles to act on it.
     public static long SEEK_REISSUE_MS = 300;
     private long lastSeekMs = 0;
     private int seekIssues = 0;
     private boolean lastSticks = false;
-    // follow() is issued from the gamepad block, before update() has run on
-    // it, so isBusy() means nothing for the first few loops.
     public static long MACRO_SETTLE_MS = 400;
     private long autoTargetMs = 0;
-    // When the whole macro began, as opposed to the current leg.
     private long macroStartMs = 0;
 
     private void serviceDrive() {
         if (follower == null) return;
 
         double ly = -gamepad1.left_stick_y;
-        // Negated 17 Nov: strafe was mirrored while forward was correct.
         double lx = -gamepad1.left_stick_x * LATERAL_SIGN;
         double rx = gamepad1.right_stick_x * SPIN_SIGN;
 
-        // Field centric is computed in FIELD coordinates, where +y is one
-        // fixed direction for everyone. The two alliances' drivers stand at
-        // opposite ends, so the field's +y is "forward" to one of them and
-        // "back" to the other -- which is why BLUE drove in reverse with the
-        // same code. Rotate the sticks into THIS driver's frame first.
         if (DRIVER_FRAME_DEG != 0) {
             double a = Math.toRadians(DRIVER_FRAME_DEG);
             double ca = Math.cos(a), sa = Math.sin(a);
@@ -329,7 +269,6 @@ public class Teleop_MechRed extends OpMode {
             ly = f; lx = t;
         }
 
-        // A driver reaching for the stick means "I am taking over", and they
         boolean sticks = Math.abs(ly) > STICK_CANCEL
                       || Math.abs(lx) > STICK_CANCEL
                       || Math.abs(rx) > STICK_CANCEL;
@@ -340,18 +279,13 @@ public class Teleop_MechRed extends OpMode {
             seeking = false;
         }
 
-        // Turn leg landed? Start the translation.
         serviceMacroStage();
 
-        // A macro that has arrived releases itself, so the driver gets
-        // control back.
         if (autoTarget != null && macroFinal == null
                 && System.currentTimeMillis() - autoTargetMs > MACRO_SETTLE_MS
                 && !follower.isBusy()) {
             autoTarget = null;
         }
-        // Dead-man. A macro that cannot converge used to spin until the
-        // driver fought it off the sticks; now it gives up and hands back.
         if (autoTarget != null
                 && System.currentTimeMillis() - macroStartMs > MACRO_MAX_S * 1000) {
             autoTarget = null;
@@ -360,13 +294,8 @@ public class Teleop_MechRed extends OpMode {
         }
 
         boolean rb = gamepad1.right_bumper;
-        // Pressing RB means "go get that ball", so it also commands
         if (rb && autoTarget == null) {
             if (!p1rb) mech.setState(MechState.INTAKE_FIELD);
-            // Re-issuing follow() every loop restarts the path before it can
-            // move, so the robot sits still while the Seek line keeps saying
-            // it is driving. Only re-issue once the follower is genuinely
-            // idle AND the last attempt has had time to take effect.
             long now = System.currentTimeMillis();
             boolean stale = now - lastSeekMs > SEEK_REISSUE_MS;
             if (!seeking || (stale && !follower.isBusy())) {
@@ -377,11 +306,7 @@ public class Teleop_MechRed extends OpMode {
             seeking = false;
         }
 
-        // Both flags, not one. Dropping autoTarget from this test is what
-        // killed every macro: manual() then ran on the same loops follow()
-        // was meant to own, and the last command wins.
         if (autoTarget == null && !seeking) {
-            // Held, not toggled: a precision mode you can leave switched
             double scale = gamepad1.left_trigger > 0.5 ? PRECISION_SCALE : 1.0;
             follower.manual(ly * scale, lx * scale, rx * scale);
         }
@@ -391,7 +316,6 @@ public class Teleop_MechRed extends OpMode {
 
     // ---- drive-to-pose, driven from GAMEPAD 2 ---------------------------
 
-    // Cost weights for picking a shoot preset, and the macro's dead-man.
     public static double TURN_COST_IN_PER_DEG = 0.35;
     public static double CLOSE_BONUS_IN = 20.0;
     public static double MACRO_MAX_S = 5.0;
@@ -406,11 +330,6 @@ public class Teleop_MechRed extends OpMode {
         return r;
     }
 
-    // linear(to, to) holds the target heading from the first instant. That is
-    // right for a short hop, but from across the field it asks the robot to
-    // spin and translate at once, which this drivetrain cannot do -- it just
-    // spins. So a big turn gets its own short leg first, exactly like the
-    // autos, and the long leg that follows is pure translation.
     private void driveToPose(Pose to, String name) {
         if (follower == null) return;
         Pose here = follower.pose();
@@ -434,7 +353,6 @@ public class Teleop_MechRed extends OpMode {
         follower.follow(Paths.line(here, to).linear(to, to));
     }
 
-    // Stage two, once the turn leg has landed.
     private void serviceMacroStage() {
         if (macroFinal == null || follower == null || follower.isBusy()) return;
         if (System.currentTimeMillis() - autoTargetMs <= MACRO_SETTLE_MS) return;
@@ -444,7 +362,6 @@ public class Teleop_MechRed extends OpMode {
         autoTargetMs = System.currentTimeMillis();
     }
 
-    // Three per CELL; pick by which CELL is raised, then by distance.
     private void driveToNearestShoot() {
         if (follower == null) return;
         Pose here = follower.pose();
@@ -452,8 +369,6 @@ public class Teleop_MechRed extends OpMode {
         if (tgt == null) tgt = shooter.hiveTargetForPosition(here.x(), here.y());
         Pose[] opts;
         String[] names;
-        // All four per cell: the close pose plus the three spread ones, so a
-        // blocked spot still has somewhere to go.
         if (tgt == ShooterAdapter.Target.AUDIENCE_SIDE) {
             opts = new Pose[] { Red.SHOOT_CLOSE_AUD, Red.SHOOT_AUD_MID,
                                 Red.SHOOT_AUD_WEST, Red.SHOOT_AUD_EAST };
@@ -466,10 +381,6 @@ public class Teleop_MechRed extends OpMode {
             opts = new Pose[] { Red.SHOOT_CLOSE_AUD, Red.SHOOT_CLOSE_SCO };
             names = new String[] { "AUD_CLOSE", "SCO_CLOSE" };
         }
-        // Cost, not raw distance. A preset 10 in nearer but 120 deg round is
-        // a worse trip than one slightly further that the robot already
-        // faces, because the turn is what this drivetrain is slow at.
-        // CLOSE gets a bonus because it is the pose that actually scores.
         int best = 0;
         double bestC = Double.MAX_VALUE;
         for (int i = 0; i < opts.length; i++) {
@@ -485,9 +396,6 @@ public class Teleop_MechRed extends OpMode {
     private void driveToNearestFlower() {
         if (follower == null) return;
         Pose here = follower.pose();
-        // All four, not this alliance's two. ShooterAdapter's flowerZones
-        // already cover the whole field, and looking at only two is why this
-        // kept driving to the same flower whatever the robot was near.
         Pose[] opts = { Red.FLOWER_RED_AUD, Red.FLOWER_RED_SCO,
                         Red.FLOWER_BLU_AUD, Red.FLOWER_BLU_SCO };
         String[] names = { "FLW_R_AUD", "FLW_R_SCO", "FLW_B_AUD", "FLW_B_SCO" };
@@ -505,12 +413,9 @@ public class Teleop_MechRed extends OpMode {
 
     private static int clampCount(int v) { return v < 0 ? 0 : (v > 4 ? 4 : v); }
 
-    // Why a seek did nothing, in one line.
     private void seekBall() {
         Pose here = follower.pose();
         if (!vision.isBallDetectionEnabled()) {
-            // serviceBallVision() only enables it from mech.update(), which
-            // runs AFTER this. Turn it on now so the first press is not wasted.
             vision.setBallDetectionEnabled(true);
             seekWhyMs = System.currentTimeMillis();
             seekWhy = "camera off -- just enabled, hold RB";
@@ -519,9 +424,6 @@ public class Teleop_MechRed extends OpMode {
         }
         BallDetector.Detection d = vision.nearestWantedBall(mech.allianceTeamNectar());
         if (d == null) {
-            // "Nothing wanted" and "nothing detected at all" are different
-            // faults: the first is the colour filter, the second is the HSV
-            // gates or SIZE_CHECK, which assumes the ball is on the floor.
             BallDetector bd = vision.getBallDetector();
             int n = (bd == null) ? -1 : bd.getDetections().size();
             seekWhyMs = System.currentTimeMillis();
@@ -536,7 +438,6 @@ public class Teleop_MechRed extends OpMode {
             return;
         }
 
-        // The same helper autonomous uses, so the intake offset
         Pose to = BallSeek.targetFor(here, d);
         if (to == null) {
             double gap = Math.hypot(d.fieldX - here.x(), d.fieldY - here.y());
@@ -550,8 +451,6 @@ public class Teleop_MechRed extends OpMode {
         seekIssues++;
         follower.follow(Paths.line(here, to).linear(here, to));
         seeking = true;
-        // Latched after the follow, so it survives releasing RB and says
-        // whether the follower ever accepted the path.
         seekWhyMs = System.currentTimeMillis();
         seekWhy = String.format(Locale.US,
                 "drive %.0f in to %s  #%d  busyAfterFollow=%s",

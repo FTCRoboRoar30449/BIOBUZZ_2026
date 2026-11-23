@@ -8,42 +8,25 @@ import com.qualcomm.robotcore.hardware.ServoImplEx;
 public class TurretController {
 
     // ---- mechanism, fixed ------------------------------------------------
-    public static final double SERVO_TRAVEL_DEG  = 1800.0;   // 5-turn servo
-    public static final double SERVO_PER_TURRET  = 2.0;      // ASSUMED 2:1
+    public static final double SERVO_TRAVEL_DEG  = 1800.0;
+    public static final double SERVO_PER_TURRET  = 2.0;
 
-    // Degrees of TURRET per 1.0 of servo position.
     public static double TURRET_TRAVEL_DEG = 745.0;
 
-    // Half the turret's usable travel.
     public static double TURRET_LIMIT_DEG = 105.0;
 
     public static double ENCODER_TICKS_PER_REV = 8192.0;
 
-    // 0.4100: the servo position at which the home magnet trips, measured
-    // Backlash band at 0 deg, MEASURED 17 Nov: 0.3926 .. 0.4033, which is
-    // 7.97 deg of turret output the servo can traverse with the turret
-    // stationary. 0.4100 sat 0.0067 ABOVE that band -- 4.99 deg past it --
-    // so the servo pushed against the mechanism continuously (the buzzing)
-    // and the turret settled 5 deg off forward. The upper edge keeps the
-    // mechanism loaded the same way it already was.
-    // The MIDPOINT of the band. Paired with the lash compensation below,
-    // +/- half the lash lands exactly on each edge: 0.39795 + 0.00535 =
-    // 0.4033, minus the same = 0.3926.
     public static double SERVO_AT_ZERO = 0.39795;
 
-    // -1, from the direction labels taken 14 Nov: the + limit is the turret
     public static int SERVO_SIGN = -1;
 
-    // +1: at the + limit (left) the encoder reads 4790, against -808
     public static int ENCODER_SIGN = +1;
     public static boolean LIMIT_TRIGGERED_STATE = false;
 
     // ---- tuning ----------------------------------------------------------
     public static int SEARCH_FIRST_DIR = +1;
 
-    // 85: the magnet sits well off the stored zero, and 30 could not reach
-    // Init verifies the switch and stops. The sweep is a recovery action --
-    // gamepad 2 start in TeleOp, RB on the RobotSetup init screen.
     public static boolean AUTO_SEARCH_ON_INIT = false;
     public static double SEARCH_SPAN_DEG = 85.0;
     public static double SEARCH_STEP_DEG = 0.5;
@@ -72,7 +55,6 @@ public class TurretController {
         this.servo = robot.turretRot;
         this.limit = robot.magneticLimitSwitch;
 
-        // A 5-turn servo only reaches its full 1800 deg if the PWM range
         if (servo instanceof ServoImplEx) {
             ((ServoImplEx) servo).setPwmRange(new PwmControl.PwmRange(500, 2500));
         }
@@ -80,7 +62,6 @@ public class TurretController {
 
     // ---- aiming ----------------------------------------------------------
 
-    // The home switch is a repeatable reference MARK, not the zero you want.
     public static double HOME_OFFSET_DEG = 0.0;
 
     public static double servoPositionFor(double turretDeg) {
@@ -105,10 +86,10 @@ public class TurretController {
     public static boolean ENCODER_COUPLED = false;
 
     // ---- closed loop on the through-bore ----------------------------------
-    public static boolean CLOSED_LOOP = false;      // off until signs are verified
-    public static double CL_KP        = 0.35;       // fraction of error per loop
-    public static double CL_TOL_DEG   = 0.75;       // inside this, stop correcting
-    public static double CL_MAX_TRIM  = 0.080;      // servo units, 36 deg of authority
+    public static boolean CLOSED_LOOP = false;
+    public static double CL_KP        = 0.35;
+    public static double CL_TOL_DEG   = 0.75;
+    public static double CL_MAX_TRIM  = 0.080;
 
     private double servoTrim = 0.0;
     private boolean clSaturated = false;
@@ -119,15 +100,10 @@ public class TurretController {
     public void setTurretDeg(double turretDeg) {
         double next = clampTurret(turretDeg);
         double delta = Math.abs(next - commandedDeg);
-        // Only restart the clock on a real move, so holding a target steady
         if (delta > 0.25) {
-            // Direction of travel decides which side of the lash the output
-            // is resting on. Only a real move flips it, so holding a target
-            // does not oscillate the correction.
             lashDir = next > commandedDeg ? +1 : -1;
             lastMoveDeg = delta;
             moveStartMs = System.currentTimeMillis();
-            // A new target invalidates the trim earned at the old one.
             servoTrim = 0.0;
             clSaturated = false;
         }
@@ -135,22 +111,6 @@ public class TurretController {
         writeServo();
     }
 
-    // Backlash. MEASURED 17 Nov: the servo traverses 0.3926..0.4033 at
-    // 0 deg with the output stationary, so the gear train has 7.97 deg of
-    // play. Without compensation the turret lands up to 4 deg off whenever
-    // it reverses -- 2.7 in of lateral miss at 39 in.
-    //
-    // The output trails the servo by half the lash on whichever side it is
-    // being pushed from, so the correction is half the lash in the
-    // direction of travel. Re-measure with RobotSetup step 18, Y.
-    // 7.97 deg, from the hand-measured band 0.3926..0.4033.
-    //
-    // The encoder test gave 11.9, 17.5 and 13.4 deg with the band wandering
-    // 13 deg between runs. That is the servo deflecting under load rather
-    // than a gear gap, so the figure it returns depends on how hard it is
-    // being pushed at the time. The hand measurement is the better number
-    // because it was taken unloaded. SERVO REPLACEMENT IS THE REAL FIX --
-    // after the 22 Nov match.
     public static boolean LASH_COMPENSATE = true;
     public static double LASH_DEG = 7.97;
     private int lashDir = +1;
@@ -160,18 +120,15 @@ public class TurretController {
     private void writeServo() {
         double eff = commandedDeg;
         if (LASH_COMPENSATE) {
-            // Clamped again: near a limit the correction would otherwise
-            // ask for travel the turret does not have.
             eff = clampTurret(commandedDeg + lashDir * LASH_DEG / 2.0);
         }
         double pos = servoPositionFor(eff) + servoTrim;
         servo.setPosition(pos < 0 ? 0 : (pos > 1 ? 1 : pos));
     }
 
-    // Nudge the command until the ENCODER agrees with the target.
     private void serviceClosedLoop() {
         if (!CLOSED_LOOP || !ENCODER_COUPLED || !encoderZeroed) return;
-        if (homeState != HomeState.HOMED) return;      // homing owns the servo
+        if (homeState != HomeState.HOMED) return;
 
         double m = getMeasuredDeg();
         if (Double.isNaN(m)) return;
@@ -196,14 +153,13 @@ public class TurretController {
 
     public boolean isSettled() {
         if (System.currentTimeMillis() - moveStartMs < settleTimeMs()) return false;
-        // With the loop running, "settled" means the ENCODER agrees --
         if (CLOSED_LOOP && ENCODER_COUPLED && encoderZeroed) {
             double s = getSlipDeg();
             return Double.isNaN(s) || Math.abs(s) <= ARRIVED_TOLERANCE_DEG;
         }
-        if (!ENCODER_COUPLED) return true;            // bench: trust the clock
+        if (!ENCODER_COUPLED) return true;
         double slip = getSlipDeg();
-        if (Double.isNaN(slip)) return true;          // not zeroed yet
+        if (Double.isNaN(slip)) return true;
         return Math.abs(slip) <= ARRIVED_TOLERANCE_DEG;
     }
 
@@ -212,7 +168,6 @@ public class TurretController {
     public double getMeasuredDeg() {
         if (!encoderZeroed) return Double.NaN;
         int ticks = robot.intakeMot.getCurrentPosition() - encoderZeroTicks;
-        // The encoder was zeroed AT THE SWITCH, where the turret really sits
         return ENCODER_SIGN * ticks * 360.0 / ENCODER_TICKS_PER_REV
                 + HOME_OFFSET_DEG;
     }
@@ -239,12 +194,6 @@ public class TurretController {
         searchOffsetDeg = 0.0;
         searchStep = 0;
         setTurretDeg(0.0);
-        // Zero the through-bore HERE, at SERVO_AT_ZERO, rather than waiting
-        // for the switch. The turret is parked at zero between matches, so
-        // this is the reference; the switch check that follows says whether
-        // that was true. Without it getMeasuredDeg() stays NaN whenever the
-        // switch does not confirm, which takes the closed loop and the lash
-        // test down with it.
         zeroEncoderHere();
     }
 
@@ -264,10 +213,6 @@ public class TurretController {
                 if (isAtHomeSwitch()) {
                     adoptHomeAt(servoPositionFor(0.0));
                 } else {
-                    // Sit still and say so. Sweeping 85 deg at every init is
-                    // what vibrated the turret on 17 Nov, and it is not worth
-                    // doing when the turret is already parked at zero: the
-                    // useful information is simply whether the switch sees it.
                     homeState = HomeState.NEEDS_SEARCH;
                     if (AUTO_SEARCH_ON_INIT) beginSearch();
                 }
@@ -278,15 +223,13 @@ public class TurretController {
                 lastStepMs = now;
 
                 if (isAtHomeSwitch()) {
-                    // The offset we had to add IS the correction
                     adoptHomeAt(servoPositionFor(searchOffsetDeg));
                     break;
                 }
 
-                // Walk outward, alternating sides, FIRST_DIR first
                 searchStep++;
-                int ring = (searchStep + 1) / 2;          // 1,1,2,2,3,3,...
-                int side = (searchStep % 2 == 1)          // first, second, ...
+                int ring = (searchStep + 1) / 2;
+                int side = (searchStep % 2 == 1)
                         ? (SEARCH_FIRST_DIR >= 0 ? +1 : -1)
                         : (SEARCH_FIRST_DIR >= 0 ? -1 : +1);
                 searchOffsetDeg = side * ring * SEARCH_STEP_DEG;
@@ -304,7 +247,6 @@ public class TurretController {
         serviceClosedLoop();
     }
 
-    // The switch has been found at servoPosAtSwitch.
     private void adoptHomeAt(double servoPosAtSwitch) {
         SERVO_AT_ZERO = servoPosAtSwitch
                 - SERVO_SIGN * HOME_OFFSET_DEG / TURRET_TRAVEL_DEG;

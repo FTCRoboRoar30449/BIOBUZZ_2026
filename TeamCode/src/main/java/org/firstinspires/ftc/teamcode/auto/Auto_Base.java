@@ -22,7 +22,6 @@ import org.firstinspires.ftc.teamcode.robot.BallSeek;
 
 public abstract class Auto_Base extends OpMode {
 
-    // A step's path is built when the step LAUNCHES, not when the route
     protected interface PathSource { Path build(); }
 
     protected static final class Step {
@@ -51,7 +50,6 @@ public abstract class Auto_Base extends OpMode {
         }
     }
 
-    // Drive there AND finish the volley before moving on.
     protected Step shootLeg(Pose a, Pose b) {
         Path p = leg(a, b);
         return new Step(() -> p, MechState.SHOOTING_HIVE, null, false, true);
@@ -62,7 +60,6 @@ public abstract class Auto_Base extends OpMode {
         return new Step(() -> p, MechState.SHOOTING_HIVE, null, false, true);
     }
 
-    // START FROM WHEREVER THE ROBOT ACTUALLY IS.
     protected Step shootTo(Pose to) {
         return new Step(() -> legConst(follower.pose(), to),
                 MechState.SHOOTING_HIVE, null, false, true);
@@ -72,20 +69,10 @@ public abstract class Auto_Base extends OpMode {
         return new Step(() -> legConst(follower.pose(), to), onStart, onArrive, false);
     }
 
-    // Hold the TARGET heading for the whole leg instead of interpolating from
-    // the live one. Measured 19 Nov: this drivetrain tracks a fixed heading
-    // cleanly but oscillates on a moving one. leg() from two fixed poses with
-    // equal headings is already constant; a leg from follower.pose() never is,
-    // because the live heading is never exactly the target's. linear(b, b)
-    // interpolates b to b, so the setpoint is a step at the start that the
-    // controller nulls, not a ramp it chases the whole way.
     protected static Path legConst(Pose a, Pose b) {
         return Paths.line(a, b).linear(b, b);
     }
 
-    // What is in the robot at start, on every route. Four pollen fills the
-    // magazine -- the counts clamp at 4 total, so there is no room for nectar
-    // alongside them. Override the two methods on a route that starts empty.
     public static int PRELOAD_POLLEN = 4;
     public static int PRELOAD_NECTAR = 0;
 
@@ -93,11 +80,6 @@ public abstract class Auto_Base extends OpMode {
     protected int preloadNectar() { return PRELOAD_NECTAR; }
 
     // ---- turn splitting ----------------------------------------------------
-    // leg() holds the TARGET heading from the first instant. Over a short hop
-    // that is right; over a long one it asks this drivetrain to spin and
-    // translate at once, which it cannot do -- it lurches, or just spins.
-    // So a leg that turns a lot AND travels far is split: a short leg at the
-    // NEW heading, then the rest as pure translation.
     public static double TURN_LEG_IN = 10.0;
     public static double TURN_SPLIT_DEG = 90.0;
 
@@ -113,7 +95,6 @@ public abstract class Auto_Base extends OpMode {
                 && Math.hypot(b.x() - a.x(), b.y() - a.y()) > TURN_LEG_IN * 2.5;
     }
 
-    // TURN_LEG_IN along the way to b, already carrying b's heading.
     protected static Pose turnPoint(Pose a, Pose b) {
         double len = Math.hypot(b.x() - a.x(), b.y() - a.y());
         double f = len > 1e-6 ? Math.min(TURN_LEG_IN / len, 0.5) : 0.0;
@@ -125,13 +106,11 @@ public abstract class Auto_Base extends OpMode {
         return new Step(leg(a, turnPoint(a, b)), null, null);
     }
 
-    // Runtime version, for the steps that start wherever the sweep left off.
     protected Step turnTowards(Pose to) {
         return new Step(() -> legConst(follower.pose(), turnPoint(follower.pose(), to)),
                 null, null, false);
     }
 
-    // Give up waiting rather than hang the whole route.
     public static double MECH_WAIT_MAX_S = 5.0;
     private long mechWaitStart = 0;
 
@@ -162,15 +141,6 @@ public abstract class Auto_Base extends OpMode {
     private boolean entered = false;
     private long emptySince = 0;
 
-    // MEASURED 21 Nov with the eight TestPure/TestBase runs: this drivetrain
-    // holds a fixed heading cleanly and oscillates on a moving one, on
-    // straight lines and curves alike. headingFeedback is a pure proportional
-    // controller, so a ramp leaves a standing error it cannot null -- there
-    // is no gain that fixes that, only feedforward or a piecewise gain.
-    //
-    // So every path holds its TARGET heading throughout. The turn happens as
-    // a step at the start, which the controller does null, instead of being
-    // dragged out along the path. Set false to go back to interpolation.
     public static boolean CONSTANT_HEADING = true;
 
     protected static Path leg(Pose a, Pose b) {
@@ -183,8 +153,6 @@ public abstract class Auto_Base extends OpMode {
         return Paths.curve(a, control, b).linear(a, b);
     }
 
-    // Tangent heading IS a ramp by definition, so it cannot be used at all
-    // until the heading controller is fixed. Falls back to constant.
     protected static Path curveTangent(Pose a, Pose control, Pose b) {
         if (CONSTANT_HEADING) return Paths.curve(a, control, b).linear(b, b);
         return Paths.curve(a, control, b).tangent();
@@ -202,7 +170,6 @@ public abstract class Auto_Base extends OpMode {
                 mech.cellPollenIn, mech.cellNectarIn);
     }
 
-
     @Override
     public void init() {
         robot   = new RobotHardware(hardwareMap, telemetry);
@@ -215,14 +182,10 @@ public abstract class Auto_Base extends OpMode {
         vision.startHiveAprilTagPipeline();
         mech.setState(MechState.START);
         mech.initPositions();
-        // Both counts default to 0, and a volley counts down from them, so a
-        // route that shoots a hand-loaded preload fires nothing unless it
-        // says what is aboard. Routes that start empty leave this at 0.
         mech.countPollen = preloadPollen();
         mech.countNectar = preloadNectar();
         turret.beginHoming();
 
-        // create() builds a real Follower as of 14 Nov.
         follower = Constants.create(hardwareMap);
         if (follower != null) follower.setPose(startPose());
 
@@ -248,7 +211,6 @@ public abstract class Auto_Base extends OpMode {
 
     @Override
     public void loop() {
-        // No follower: skip DRIVING, not the mechanism.
         if (follower == null) {
             telemetry.addLine("FOLLOWER IS NULL -- mech only, cannot drive");
             mech.update();
@@ -260,9 +222,6 @@ public abstract class Auto_Base extends OpMode {
         advance();
         mech.update();
 
-        // The route is over but update() keeps holding the last path's end
-        // pose, which jitters until STOP. Hand the drive back once, and keep
-        // calling update() so the pose stays live for MatchState.
         if (index >= steps.length && !routeReleased) {
             follower.manual(0, 0, 0);
             routeReleased = true;
@@ -286,13 +245,11 @@ public abstract class Auto_Base extends OpMode {
         Step s = steps[index];
 
         if (!launched) {
-            // onStart BEFORE the source runs.
             if (!entered && s.onStart != null) mech.setState(s.onStart);
             entered = true;
 
             Path p = s.source.build();
             if (p == null) {
-                // A repeating step gets a grace window before "nothing here"
                 if (s.repeat) {
                     long now = System.currentTimeMillis();
                     if (emptySince == 0) emptySince = now;
@@ -313,10 +270,9 @@ public abstract class Auto_Base extends OpMode {
         if (follower.isBusy()) return;
         if (s.waitForMech && !mechDone()) return;
         launched = false;
-        if (s.repeat) return;             // re-query the source next loop
+        if (s.repeat) return;
         if (s.onArrive != null) mech.setState(s.onArrive);
         index++;
-        // Off the wall now, so the intake arm may swing out.
         mech.armDeploy();
         entered = false;
         mechWaitStart = 0;
@@ -324,12 +280,10 @@ public abstract class Auto_Base extends OpMode {
 
     // ---- ball sweep --------------------------------------------------------
 
-    // How long to keep looking before believing there is nothing here.
     public static double SWEEP_ACQUIRE_S = 1.0;
     public static int SWEEP_MAX_BALLS = 4;
     public static double SWEEP_BUDGET_S = 8.0;
 
-    // Approach geometry and the degenerate-leg guard live in BallSeek, shared
     protected Step sweep() {
         final ElapsedTime budget = new ElapsedTime();
         final boolean[] fresh = { true };
@@ -340,7 +294,6 @@ public abstract class Auto_Base extends OpMode {
             Pose here = follower.pose();
             Pose to = BallSeek.targetFor(here,
                     vision.nearestWantedBall(mech.allianceTeamNectar()));
-            // Null covers no detection, a detection with no pose behind
             if (to == null) return null;
             return leg(here, to);
         }, MechState.INTAKE_FIELD, null, true);

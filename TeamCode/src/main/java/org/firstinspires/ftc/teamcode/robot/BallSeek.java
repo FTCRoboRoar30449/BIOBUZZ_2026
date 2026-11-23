@@ -2,18 +2,14 @@ package org.firstinspires.ftc.teamcode.robot;
 
 import com.pedropathing.math.Pose;
 
-// Where to drive so the INTAKE lands on a detected ball.
 public final class BallSeek {
 
     private BallSeek() {}
 
-    // Trim on top of the measured intake offset.
     public static double APPROACH_OFFSET_IN = 0.0;
 
-    // Shorter than this and there is nothing worth driving.
     public static double MIN_TRAVEL_IN = 3.0;
 
-    // Pose to drive the robot CENTRE to.
     public static Pose approach(Pose here, BallDetector.Detection d) {
         double h = here.heading();
         double back = RobotHardware.INTAKE_BEHIND_IN + APPROACH_OFFSET_IN;
@@ -21,7 +17,6 @@ public final class BallSeek {
                         d.fieldY + back * Math.sin(h), h);
     }
 
-    // Null when there is nothing worth driving to: no detection, a detection
     public static Pose targetFor(Pose here, BallDetector.Detection d) {
         if (d == null || Double.isNaN(d.fieldX) || Double.isNaN(d.fieldY)) return null;
         Pose to = approach(here, d);

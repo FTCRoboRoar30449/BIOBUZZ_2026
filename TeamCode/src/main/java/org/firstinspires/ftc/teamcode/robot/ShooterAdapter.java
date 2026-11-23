@@ -23,8 +23,8 @@ public final class ShooterAdapter {
     public static final class FirePlan {
         public final boolean valid;
         public final FireMode mode;
-        public final double yawDeg;            // heading to adopt before firing
-        public final double sharedTurretDeg;   // SIMULTANEOUS only; NaN otherwise
+        public final double yawDeg;
+        public final double sharedTurretDeg;
         public final Shot pollen, nectar;
         FirePlan(boolean v, FireMode m, double yaw, double turret, Shot p, Shot n) {
             valid = v; mode = m; yawDeg = yaw; sharedTurretDeg = turret; pollen = p; nectar = n;
@@ -57,10 +57,10 @@ public final class ShooterAdapter {
         this.alliance = alliance;
 
         flowerZones = new Zone[] {
-            new Zone(0,   0,  48,  96,    4,  48),   // red side, audience
-            new Zone(0,  96,  96, 144,   48, 140),   // red side, scoring
-            new Zone(48,  0, 144,  48,   96,   4),   // blue side, audience
-            new Zone(96, 48, 144, 144,  140,  96)    // blue side, scoring
+            new Zone(0,   0,  48,  96,    4,  48),
+            new Zone(0,  96,  96, 144,   48, 140),
+            new Zone(48,  0, 144,  48,   96,   4),
+            new Zone(96, 48, 144, 144,  140,  96)
         };
 
         if (alliance == Alliance.RED) {

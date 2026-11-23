@@ -34,31 +34,18 @@ public class MechController {
     private boolean poseValid = false;
 
     // ---- conveyor / storage ----------------------------------------------
-    public static int TICKS_PER_POLLEN_STORAGE = 200;   // measured 14 Nov (was 100)
-    public static int TICKS_PER_NECTAR_STORAGE = 250;   // measured 14 Nov (was 150)
-    // TRIPLED 22 Nov. In continuous fire these are not a belt stroke -- they
-    // are the travel-per-ball the counter uses to decide a ball has left.
-    // Too small and the count reaches zero while balls are still in the
-    // tunnel, which is why a volley sometimes ended with the magazine not
-    // empty. Tripling makes the belt run three times as far before the count
-    // is satisfied, so everything gets out. Side effect: the CELL estimate
-    // climbs three times slower, so read it as a lower bound.
-    public static int TICKS_TO_SHOOT_POLLEN = 1200;  // measured 400, x3
-    public static int TICKS_TO_SHOOT_NECTAR = 1500;  // measured 500, x3
-    public static int TICKS_TO_SHOOT_BOTH = 1500;  // measured 500, x3
+    public static int TICKS_PER_POLLEN_STORAGE = 200;
+    public static int TICKS_PER_NECTAR_STORAGE = 250;
+    public static int TICKS_TO_SHOOT_POLLEN = 1200;
+    public static int TICKS_TO_SHOOT_NECTAR = 1500;
+    public static int TICKS_TO_SHOOT_BOTH = 1500;
 
-    // 17 Nov: the TICKS_TO_SHOOT_* stroke does not carry a ball from the
-    // tunnel to the flywheel. Index strokes and the encoder are fine, so this
-    // affects the feed only. False runs the belt for FEED_RUN_MS instead.
     public static boolean FEED_BY_TICKS = false;
-    public static long FEED_RUN_MS = 900;    // UNMEASURED, time it on the robot
+    public static long FEED_RUN_MS = 900;
 
-    // Index strokes moved onto a timer too, 17 Nov. Shorter than a feed:
-    // the ball only moves up one storage slot.
     public static boolean INDEX_BY_TICKS = false;
-    public static long INDEX_RUN_MS = 500;   // UNMEASURED
-    public static final int MAX_CONVEYOR_ROTATION = 300;   // bed servo span, deg
-    // Four positions, not a shared pair.
+    public static long INDEX_RUN_MS = 500;
+    public static final int MAX_CONVEYOR_ROTATION = 300;
     public static double BED_POLLEN_ENGAGED    = 0.360;
     public static double BED_POLLEN_DISENGAGED = 0.170;
     public static double BED_NECTAR_ENGAGED    = 0.230;
@@ -66,7 +53,6 @@ public class MechController {
 
     public static long REVERSE_INTAKE_TIME_MS = 700;
     private static final long SENSOR_CLEAR_TIMEOUT_MS = 1800;
-        // 1.0, measured 14 Nov.
     public static double CONVEYOR_POWER = 1.0;
     public static double INTAKE_POWER = 1.0;
 
@@ -93,18 +79,14 @@ public class MechController {
     // ---- shooting timing / tolerances -------------------------------------
     private static final long SHOOTER_SPINUP_TIMEOUT_MS = 6000;
     private static final long SHOOTER_FEED_TIMEOUT_MS = 2500;
-    // MEASURED 14 Nov, timed from the lowest point back to within 2%
     public static long SHOOTER_RECOVER_MS = 1750;
     private static final long FEED_MIN_MS = 150;
     private static final long TURRET_SETTLE_TIMEOUT_MS = 2500;
     public static double SHOOTER_READY_TOLERANCE = 0.95;
     public static boolean REQUIRE_HOMED = true;
-    // 21 Nov: SHOOTING_HIVE streams rather than firing one ball at a time.
     public static boolean HIVE_CONTINUOUS = true;
-    // flowerIntake measured stops, 13 Nov: 0.445 ..
     public static double FLOWER_REST = 0.540, FLOWER_SCOOP = 0.445;
 
-    // Where the scoop sits BEFORE the arm deploys, measured 14 Nov.
     public static double FLOWER_PREDEPLOY = 0.820;
 
     public static double FLOWER_HOOD_DEG = 80.0;
@@ -138,7 +120,6 @@ public class MechController {
     private ShooterAdapter.FirePlan lastPlan = null;
     private String shotNote = "";
 
-    // Loop timing.
     private long cycleStartMs = 0;
     private long lastAimMs = 0, lastSpinMs = 0, lastFeedMs = 0, lastCycleMs = 0;
 
@@ -164,7 +145,6 @@ public class MechController {
             if (dt > 0.001) {
                 double d = Math.hypot(xIn - poseX, yIn - poseY);
                 double inst = d / dt;
-                // Lightly smoothed: odometry jitter at 150 Hz would otherwise
                 speedInPerSec = speedInPerSec * 0.8 + inst * 0.2;
                 double dh = Math.abs(ShooterAdapter.wrap180(headingDeg - poseHeadingDeg));
                 turnDegPerSec = turnDegPerSec * 0.8 + (dh / dt) * 0.2;
@@ -181,7 +161,6 @@ public class MechController {
     public static double FIRE_MAX_SPEED_IN_S = 4.0;
     public static double FIRE_MAX_TURN_DEG_S = 15.0;
 
-    // One meaning for the flag everywhere.
     private boolean steadyOrDisabled() {
         return !FIRE_ONLY_WHEN_STEADY || isSteadyEnoughToFire();
     }
@@ -208,16 +187,11 @@ public class MechController {
         serviceBallVision();
 
         handleMechState(this.currentState);
-        // AFTER the state, not before: deployment owns the intake motor
         serviceDeploy(nowMs);
-        // AFTER the state for the same reason deployment is: while the drop
         serviceBedDrop(nowMs);
-        // Single owner for the scoop, by distance only.
         serviceScoop();
-        // Last word on the intake motor.
         serviceIntakeLimit();
 
-        // Watch both flywheels for the dip a departing ball causes.
         serviceExitDetect();
 
         serviceConveyorCompletion();
@@ -237,14 +211,9 @@ public class MechController {
         robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         activeConveyor = ConveyorType.NONE;
         conveyorTargetPosition = -1;
-        // Restore the resting pattern only if nothing else owns the beds.
         if (!flowing) setBedsUp();
     }
 
-    // The arm swings out far enough to hit the perimeter wall if it deploys
-    // while the robot is still on it. Autonomous arms this once the first
-    // path has finished; TeleOp arms at once, because by then the robot is
-    // wherever autonomous left it.
     public static boolean DEPLOY_AFTER_FIRST_PATH = true;
     private boolean deployArmed = false;
     public void armDeploy() { deployArmed = true; }
@@ -262,26 +231,21 @@ public class MechController {
         }
         robot.intakeMot.setPower(0);
         if (since >= DEPLOY_MS + DEPLOY_SCOOP_DELAY_MS) {
-            // Direct write: scoopTo() is gated on the very flag being set here.
             robot.flowerIntake.setPosition(FLOWER_REST);
             deployDone = true;
         }
     }
 
-    // Everything commanded to a known place at INIT, before play.
     public void initPositions() { initPositions(false); }
 
-    // armAlreadyDeployed: autonomous starts stowed and deploys, so it passes
     public void initPositions(boolean armAlreadyDeployed) {
-        // setBedsUp() is the ENGAGED pattern -- conveyorX(1) maps
         setBedsUp();
         robot.turretRot.setPosition(TurretController.SERVO_AT_ZERO);
-        // Hoods start at their BOTTOM limit, 80 deg.
         robot.hoodPollen.setPosition(HoodMap.POLLEN_INIT_POS);
         robot.hoodNectar.setPosition(HoodMap.NECTAR_INIT_POS);
 
         if (armAlreadyDeployed) {
-            deployDone = true;              // do not re-run the sequence
+            deployDone = true;
             robot.flowerIntake.setPosition(FLOWER_REST);
         } else {
             robot.flowerIntake.setPosition(FLOWER_PREDEPLOY);
@@ -302,15 +266,12 @@ public class MechController {
         shotNote = "";
         preSpinning = false;
         haltFlow();
-        // A new command is the driver's answer to a tipped CELL, so clear
         cellTipped = false;
         pollenExits = 0; nectarExits = 0;
         pollenExitsAtArm = 0; nectarExitsAtArm = 0;
-        // DISARMED, not armed -- a state change is not evidence either wheel
         pollenDipLow = true; nectarDipLow = true;
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
-            // scoop: serviceScoop() folds it once clear of the flower
             operationStatus = OperationStatus.CANCELLED;
         } else if (newState == MechState.START) {
             operationStatus = OperationStatus.NOT_STARTED;
@@ -326,7 +287,6 @@ public class MechController {
         if (oldState == MechState.INTAKE_FLOWER || oldState == MechState.INTAKE_FLOWER_SHOOT_HIVE
                 || oldState == MechState.INTAKE_FLOWER_SHOOT_FLOWER) {
             stopIntake();
-            // scoop: serviceScoop() folds it once clear of the flower
         }
         if (maySpin(oldState) && !maySpin(newState)) {
             stopFeedConveyor();
@@ -347,14 +307,12 @@ public class MechController {
         switch (state) {
             case START:
                 stopShooterMotors();
-                // Deployment is NOT here -- see serviceDeploy(), which runs
                 if (!deployDone) operationStatus = OperationStatus.RUNNING;
                 else operationStatus = OperationStatus.COMPLETED;
                 break;
 
             case IDLE:
                 stopIntake(); stopShooterMotors();
-                // scoop: serviceScoop() folds it once clear of the flower
                 if (activeConveyor == ConveyorType.NONE) robot.conveyorMot.setPower(0);
                 break;
 
@@ -372,7 +330,6 @@ public class MechController {
                     serviceContinuousFire(now, true);
                 } else {
                     haltFlow();
-                    // Before the full check: a robot that has just filled up
                     servicePreSpin();
                 }
                 if (!flowing) setBedsUp();
@@ -393,7 +350,6 @@ public class MechController {
                         operationStatus = OperationStatus.TIMED_OUT; stopIntake();
                     }
                 } else if (isWrongNectar(color) || nectarTunnelFull(color)) {
-                    // nectarTunnelFull: our own nectar, but the tunnel holds
                     reversingWrongBall = true; reverseStartMs = now; robot.intakeMot.setPower(-INTAKE_POWER);
                 } else {
                     robot.intakeMot.setPower(INTAKE_POWER);
@@ -415,7 +371,6 @@ public class MechController {
                     if (state == MechState.INTAKE_FLOWER) {
                         operationStatus = OperationStatus.ROBOT_FULL;
                     } else {
-                        // No deferral needed.
                         setState(state == MechState.INTAKE_FLOWER_SHOOT_HIVE
                                 ? MechState.SHOOTING_HIVE : MechState.SHOOTING_FLOWER_POLLEN);
                     }
@@ -424,14 +379,13 @@ public class MechController {
                 int flowerPollen = vision.getFlowerPollenCount();
                 if (flowerPollen < 0) {
                     operationStatus = OperationStatus.VISION_UNAVAILABLE;
-                    flowerPollen = 1;                 // assume there is more
+                    flowerPollen = 1;
                 }
                 if (flowerPollen == 0) {
                     stopFlowerIntake();
                     if (state == MechState.INTAKE_FLOWER) {
                         operationStatus = OperationStatus.FLOWER_EMPTY;
                     } else {
-                        // Flower is dry but we may still be holding balls
                         setState(state == MechState.INTAKE_FLOWER_SHOOT_HIVE
                                 ? MechState.SHOOTING_HIVE : MechState.SHOOTING_FLOWER_POLLEN);
                     }
@@ -440,7 +394,6 @@ public class MechController {
                 boolean noPose = !poseValid;
                 double fRange = flowerRangeIn();
                 boolean knowRange = !Double.isNaN(fRange);
-                // No clearToDeploy here any more -- serviceScoop() owns
                 boolean atFlower = noPose || (knowRange && fRange <= FLOWER_INTAKE_IN);
 
                 if (!noPose && (!knowRange || fRange > FLOWER_RETRACT_IN)) {
@@ -454,9 +407,7 @@ public class MechController {
                     break;
                 }
 
-                // NOT while a shot is feeding: beginFeed() has set a specific
                 if (!atFlower) {
-                    // Approaching, not there yet.
                     stopIntake();
                     if (state != MechState.INTAKE_FLOWER) {
                         serviceContinuousFire(now,
@@ -491,9 +442,6 @@ public class MechController {
             }
 
             case SHOOTING_HIVE: {
-                // Stream every ball on one belt run instead of arming, feeding
-                // and waiting out SHOOTER_RECOVER_MS per ball. Same path the
-                // flower shots use. Set false to go back to the per-ball FSM.
                 if (HIVE_CONTINUOUS) {
                     serviceContinuousFire(now, true);
                     break;
@@ -509,7 +457,6 @@ public class MechController {
                     shotNote = "no pose - OpMode must call updatePose()"; break;
                 }
 
-                // Which CELL is up: tags first, zone only as a fallback.
                 ShooterAdapter.Target tgt = vision.getRaisedTarget();
                 if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
                 if (tgt == null) {
@@ -536,7 +483,6 @@ public class MechController {
                 if (!plan.valid) {
                     stopShooterMotors(); stopFeedConveyor();
                     operationStatus = OperationStatus.NO_SHOT;
-                    // plan() answers the question planHere() cannot: IS there
                     ShooterAdapter.Shot ps = shooter.solve(
                             ShooterAdapter.Ball.POLLEN, tgt, poseX, poseY, poseHeadingDeg);
                     ShooterAdapter.Shot ns = shooter.solve(
@@ -552,12 +498,11 @@ public class MechController {
                             ns.valid ? "ok" : "FAIL",
                             would.valid
                                 ? String.format("turn to %.0f deg", would.yawDeg)
-                                : "table is 15-39 in");
+                                : "table is 15-46 in");
                     break;
                 }
                 operationStatus = OperationStatus.RUNNING;
 
-                // Arming is shared with the concurrent path in the combo
                 if (shotPhase == ShotPhase.IDLE) armFromPlan(plan, now);
                 runShotSequence(now);
                 break;
@@ -584,7 +529,6 @@ public class MechController {
                 }
                 operationStatus = OperationStatus.RUNNING;
 
-                // ONE ball per command: only arm if nothing has gone out yet.
                 if (shotPhase == ShotPhase.IDLE && shotsCompleted == 0) {
                     activeShotBall = requested;
                     double turretDeg = ShooterAdapter.turretDegToPoint(
@@ -593,10 +537,8 @@ public class MechController {
                     double rpm = requested == BallToShoot.NECTAR
                             ? FLOWER_NECTAR_RPM : FLOWER_POLLEN_RPM;
                     aimAndPrepare(requested, turretDeg, FLOWER_HOOD_DEG, rpm);
-                    // cycleStartMs too, or lastCycleMs reports the time since
                     shotPhase = ShotPhase.AIM; shotPhaseStartMs = now; cycleStartMs = now;
                 }
-                // Flower shooting is ONE ball per command, by driver choice.
                 runShotSequence(now);
                 if (shotPhase == ShotPhase.IDLE && shotsCompleted > 0) {
                     stopShooterMotors();
@@ -633,7 +575,6 @@ public class MechController {
         if (totalBalls() <= 0 || !poseValid) { releaseWheels(); return; }
         if (REQUIRE_HOMED && !turret.isHomed()) { releaseWheels(); return; }
 
-        // The cache is refreshed every loop by update(), so it is always
         ShooterAdapter.Target tgt = vision.getRaisedTarget();
         if (tgt == null) tgt = shooter.hiveTargetForPosition(poseX, poseY);
         if (tgt == null || !shooter.inHiveZone(tgt, poseX, poseY)) { releaseWheels(); return; }
@@ -669,16 +610,15 @@ public class MechController {
         if (preSpinHoldUntilMs == 0) { preSpinHoldUntilMs = now + PRE_SPIN_RELEASE_MS; return; }
         if (now < preSpinHoldUntilMs) return;
         preSpinHoldUntilMs = 0;
-        stopShooterMotors();        // clears preSpinning
+        stopShooterMotors();
     }
 
     public static boolean PRE_SPIN_ENABLED = true;
     private boolean preSpinning = false;
 
     // ---- ball-exit detection by flywheel RPM dip ---------------------------
-    public static double DIP_ENTER = 0.960;   // below this fraction of target = a ball went
-    // 0.965, squeezed between DIP_ENTER 0.960 and the noise low point 0.968.
-    public static double DIP_EXIT  = 0.965;   // above this, re-arm for the next
+    public static double DIP_ENTER = 0.960;
+    public static double DIP_EXIT  = 0.965;
 
     private boolean pollenDipLow = true, nectarDipLow = true;
     private int pollenExits = 0, nectarExits = 0;
@@ -690,7 +630,6 @@ public class MechController {
             if (!pollenDipLow && r < DIP_ENTER) { pollenDipLow = true; pollenExits++; }
             else if (pollenDipLow && r > DIP_EXIT) pollenDipLow = false;
         } else {
-            // Wheel not commanded: disarm, so the next spin-up has to reach
             pollenDipLow = true;
         }
         if (targetNectarTps > 0) {
@@ -698,7 +637,7 @@ public class MechController {
             if (!nectarDipLow && r < DIP_ENTER) { nectarDipLow = true; nectarExits++; }
             else if (nectarDipLow && r > DIP_EXIT) nectarDipLow = false;
         } else {
-            nectarDipLow = true;      // disarmed -- see pollen above
+            nectarDipLow = true;
         }
     }
 
@@ -708,29 +647,22 @@ public class MechController {
     public boolean isPreSpinning() { return preSpinning; }
 
     private void serviceContinuousFire(long now, boolean hive) {
-        // Each refusal names itself.
         if (REQUIRE_HOMED && !turret.isHomed()) {
             shotNote = "holding fire: turret not homed"; haltFlow(); return;
         }
         if (!poseValid) {
             shotNote = "holding fire: no pose"; haltFlow(); return;
         }
-        // A flower shot is pollen by definition.
         if (hive ? totalBalls() <= 0 : countPollen <= 0) {
             shotNote = "holding fire: nothing to shoot"; haltFlow();
-            // Empty in the dedicated shooting state means the volley is over.
-            // Without this an auto shoot step waits out MECH_WAIT_MAX_S every
-            // time, because mechDone() reads isOperationComplete().
             if (currentState == MechState.SHOOTING_HIVE) {
                 operationStatus = OperationStatus.COMPLETED;
             }
             return;
         }
-        // We own the wheels now, not pre-spin.
         preSpinning = false;
         streamNectar = false;
 
-        // Where are we shooting?
         double turretDeg;
         double hoodDeg;
         double rpm;
@@ -741,9 +673,7 @@ public class MechController {
                 shotNote = "holding fire: no CELL in view, not in a hive zone";
                 haltFlow(); return;
             }
-            // A tipped CELL ends the volley -- see checkCellTipped().
             if (checkCellTipped(tgt)) {
-                // Same as the dedicated state: a tip means no shot
                 haltFlow();
                 stopShooterMotors();
                 if (TIP_STOPS_INTAKE) stopIntake();
@@ -755,17 +685,13 @@ public class MechController {
                 double d = Math.hypot(shooter.goalX(tgt) - poseX,
                                       shooter.goalY(tgt) - poseY);
                 shotNote = String.format(
-                        "holding fire: %.0f in to %s (table 15-39) - drive closer",
+                        "holding fire: %.0f in to %s (table 15-46) - drive closer",
                         d, tgt);
                 haltFlow();
                 return;
             }
             lastPlan = plan;
 
-            // With no pollen left, aim and spin for NECTAR instead of
-            // refusing to fire. The old code always aimed the pollen
-            // solution, so a nectar-only robot held fire at any angle that
-            // was not simultaneous.
             nectarOnly = countPollen <= 0 && countNectar > 0;
 
             if (nectarOnly) {
@@ -795,7 +721,6 @@ public class MechController {
             rpm = FLOWER_POLLEN_RPM;
         }
 
-        // Hold the aim and the speed, on whichever barrel is firing.
         turret.setTurretDeg(turretDeg);
         if (nectarOnly) {
             robot.hoodNectar.setPosition(HoodMap.nectarPos(hoodDeg));
@@ -808,18 +733,15 @@ public class MechController {
         }
         operationStatus = OperationStatus.RUNNING;
 
-        // Only the barrel that is firing opens.
         conveyorPollen(nectarOnly ? 0 : 1);
         conveyorNectar((streamNectar || nectarOnly) ? 1 : 0);
 
-        // BOTH wheels must be up when both are streaming -- feeding a nectar
         boolean ready = turret.isSettled()
                 && (nectarOnly
                         ? shooterAtSpeed(BallToShoot.NECTAR)
                         : shooterAtSpeed(BallToShoot.POLLEN)
                           && (!streamNectar || shooterAtSpeed(BallToShoot.NECTAR)));
         if (ready) {
-            // An index was mid-stroke and is being taken over.
             if (activeConveyor != ConveyorType.NONE) flowAnchorValid = false;
             activeConveyor = ConveyorType.NONE;
             conveyorTargetPosition = -1;
@@ -831,17 +753,18 @@ public class MechController {
             robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             robot.conveyorMot.setPower(CONVEYOR_POWER);
         } else {
-            // Wheel still recovering, or turret still swinging.
+            boolean wasFlowing = flowing;
             flowing = false;
             robot.conveyorMot.setPower(0);
-            syncExitBaseline();
+            if (!wasFlowing) syncExitBaseline();
             return;
         }
 
         countFlowByBeltTravel(hive);
     }
 
-    public static boolean COUNT_FLOW_BY_DIP = false;
+    // Watch EXITS drift. Steady negative = dips being missed, set false.
+    public static boolean COUNT_FLOW_BY_DIP = true;
 
     private int flowAnchorTicks = 0;
     private boolean flowAnchorValid = false;
@@ -854,34 +777,29 @@ public class MechController {
                                    : TICKS_TO_SHOOT_POLLEN;
         if (perBall <= 0) return;
 
-        // Signed, and only forward travel counts.
         int travelled = robot.conveyorMot.getCurrentPosition() - flowAnchorTicks;
         while (travelled >= perBall) {
             flowAnchorTicks += perBall;
             travelled -= perBall;
-            // The pollen bed is shut when nectar is firing alone.
             if (!nectarOnly && countPollen > 0) {
                 countPollen--;
                 shotsCompleted++;
                 if (hive) cellPollenIn++;
             }
-            // Nectar only while its bed is up -- a disengaged bed cannot have
             if ((streamNectar || nectarOnly) && countNectar > 0) {
                 countNectar--;
                 shotsCompleted++;
                 if (hive) cellNectarIn++;
             }
         }
-        // The dip counters keep running as the second opinion, but they must
         syncExitBaseline();
     }
 
     private void countFlowByDip(boolean hive) {
-        // Count what actually left, not what the belt did.
         int goneP = pollenExits - pollenExitsAtArm;
         if (goneP > 0) {
             pollenExitsAtArm = pollenExits;
-            for (int i = 0; i < goneP && countPollen > 0; i++) {
+            for (int i = 0; i < goneP && !nectarOnly && countPollen > 0; i++) {
                 countPollen--;
                 shotsCompleted++;
                 if (hive) cellPollenIn++;
@@ -890,7 +808,7 @@ public class MechController {
         int goneN = nectarExits - nectarExitsAtArm;
         if (goneN > 0) {
             nectarExitsAtArm = nectarExits;
-            if (streamNectar) {
+            if (streamNectar || nectarOnly) {
                 for (int i = 0; i < goneN && countNectar > 0; i++) {
                     countNectar--;
                     shotsCompleted++;
@@ -906,7 +824,6 @@ public class MechController {
     private void haltFlow() {
         nectarOnly = false;
         syncExitBaseline();
-        // End of the session, so the partial travel goes with it.
         flowAnchorValid = false;
         if (!flowing) return;
         flowing = false;
@@ -970,7 +887,6 @@ public class MechController {
         shotPhase = ShotPhase.AIM; shotPhaseStartMs = now; cycleStartMs = now;
     }
 
-    // Re-solve from where the robot is NOW, without touching the shot phase.
     private void reAim() {
         if (!poseValid) return;
         ShooterAdapter.Target tgt = vision.getRaisedTarget();
@@ -982,20 +898,17 @@ public class MechController {
         issueAim(plan);
     }
 
-    // Hold the ball until the robot is steady.
     public static boolean FIRE_ONLY_WHEN_STEADY = true;
 
     private void runShotSequence(long now) {
         switch (shotPhase) {
             case AIM:
-                // Still moving: track the target and hold speed, but commit
                 if (FIRE_ONLY_WHEN_STEADY && !isSteadyEnoughToFire()) {
                     reAim();
                     shotPhaseStartMs = now;
                     shotNote = String.format("holding: moving %.1f in/s", speedInPerSec);
                     break;
                 }
-                // Wait on the turret actually arriving, not a fixed time.
                 if (turret.isSettled()) {
                     lastAimMs = now - shotPhaseStartMs;
                     shotPhase = ShotPhase.SPIN_UP; shotPhaseStartMs = now;
@@ -1077,7 +990,6 @@ public class MechController {
                     >= targetNectarTps * SHOOTER_READY_TOLERANCE;
         }
         if (ball == BallToShoot.BOTH) {
-            // Both must be up to speed -- feeding on one would waste the other.
             return shooterAtSpeed(BallToShoot.POLLEN) && shooterAtSpeed(BallToShoot.NECTAR);
         }
         return false;
@@ -1086,18 +998,15 @@ public class MechController {
     private boolean shotOwnsBelt() { return shotPhase == ShotPhase.FEEDING; }
 
     private void updateConveyor() {
-        // Both false while the sensors are off, which is the quiet state
         boolean pollen = USE_TUNNEL_SENSORS
                 && vision.ballCheck(robot.sensorPollenL, robot.sensorPollenR);
         boolean nectar = USE_TUNNEL_SENSORS
                 && vision.ballCheck(robot.sensorNectarL, robot.sensorNectarR);
 
-        // Continuous flow already runs the belt and carries balls
         if (flowing || shotOwnsBelt()
                 || activeConveyor != ConveyorType.NONE
                 || !isIntakeState(currentState)
                 || totalBalls() >= 4) {
-            // Keep the history current so the NEXT eligible loop sees a true
             pollenBedSeen = pollen;
             nectarBedSeen = nectar;
             return;
@@ -1144,13 +1053,11 @@ public class MechController {
     private void serviceBedDrop(long nowMs) {
         if (!bedDropActive) return;
         if (nowMs < bedDropUntilMs) {
-            // Re-commanded every loop on purpose: the state handlers call
             conveyorNectar(0);
             conveyorPollen(0);
             return;
         }
         bedDropActive = false;
-        // Put them back here rather than waiting for a state handler to do
         setBedsUp();
     }
 
@@ -1174,7 +1081,6 @@ public class MechController {
             conveyorNectar(1); conveyorPollen(0); ticks = TICKS_PER_NECTAR_STORAGE;
         } else return;
         conveyorTargetPosition = robot.conveyorMot.getCurrentPosition() + ticks;
-        // This stroke is an index, not a feed.
         flowAnchorValid = false;
         activeConveyor = type;
         conveyorStartMs = System.currentTimeMillis();
@@ -1192,7 +1098,6 @@ public class MechController {
         setBedsUp();
         int ticks;
         if (ball == BallToShoot.BOTH) {
-            // Both engaged: a pollen and a nectar leave on the same stroke.
             conveyorPollen(1); conveyorNectar(1); ticks = TICKS_TO_SHOOT_BOTH;
         } else if (ball == BallToShoot.POLLEN) {
             conveyorPollen(1); conveyorNectar(0); ticks = TICKS_TO_SHOOT_POLLEN;
@@ -1200,7 +1105,6 @@ public class MechController {
             conveyorNectar(1); conveyorPollen(0); ticks = TICKS_TO_SHOOT_NECTAR;
         }
         if (!FEED_BY_TICKS) {
-            // Same mode the continuous-flow path uses, which does move balls.
             feedTargetPosition = 0;
             robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             robot.conveyorMot.setPower(CONVEYOR_POWER);
@@ -1220,7 +1124,6 @@ public class MechController {
 
     private void finishFeed(BallToShoot ball) {
         stopFeedConveyor();
-        // No exit sensor: this is an ESTIMATE that the ball left, inferred
         boolean hive = currentState == MechState.SHOOTING_HIVE;
         boolean firedPollen = (ball == BallToShoot.POLLEN || ball == BallToShoot.BOTH);
         boolean firedNectar = (ball == BallToShoot.NECTAR || ball == BallToShoot.BOTH);
@@ -1255,11 +1158,9 @@ public class MechController {
     // ---- atomic helpers ----------------------------------------------------
 
     public static double bedPollenPos(boolean engaged) {
-        // pollen ENGAGES by raising, so engaged is the larger position
         return engaged ? BED_POLLEN_ENGAGED : BED_POLLEN_DISENGAGED;
     }
     public static double bedNectarPos(boolean engaged) {
-        // nectar ENGAGES by lowering: the mirror of the above
         return engaged ? BED_NECTAR_ENGAGED : BED_NECTAR_DISENGAGED;
     }
 
@@ -1278,19 +1179,10 @@ public class MechController {
 
     private void setBedsUp() { conveyorNectar(1); conveyorPollen(1); }
 
-    // Colour sensors are mechanically blind: all six sit recessed in holes
-    // Split 17 Nov: the two sensor groups were fixed separately.
-    //
-    // INTAKE pair drives counting and wrong-ball rejection. Working.
-    // TUNNEL pairs drive automatic indexing. Still blind, so indexing stays
-    // on the gamepad 2 bumpers.
-    //
     // The bumpers do not touch the counts, so automatic counting and manual
-    // indexing coexist without double-counting.
     public static boolean USE_INTAKE_COLOR = true;
     public static boolean USE_TUNNEL_SENSORS = false;
 
-    // 0 is already this method's "nothing in front of the sensor" value
     private int intakeColor() {
         if (!USE_INTAKE_COLOR) return 0;
         return vision.ballColor(robot.sensorIntakeR, robot.sensorIntakeL);
@@ -1312,7 +1204,6 @@ public class MechController {
                 || s == MechState.INTAKE_FLOWER_SHOOT_HIVE
                 || s == MechState.INTAKE_FLOWER_SHOOT_FLOWER;
     }
-    // The C270 is only read in four of the nine states: the three flower
     public static boolean BALL_VISION_BY_STATE = true;
 
     private void serviceBallVision() {
@@ -1355,7 +1246,6 @@ public class MechController {
         } else if (wellClear) {
             robot.flowerIntake.setPosition(FLOWER_REST);
         }
-        // else: close but not collecting -- hold position until clear.
     }
 
     public boolean isDeployed() { return deployDone; }
@@ -1373,7 +1263,6 @@ public class MechController {
     private void resetIntakeTracking() {
         resetFieldReject(); previousFlowerColor = 0; rejectingFlowerNectar = false;
         pollenBedSeen = false; nectarBedSeen = false;
-        // Retries too, or a state change part way through clearing a stuck
         pollenRetries = 0; nectarRetries = 0;
     }
 
@@ -1386,7 +1275,6 @@ public class MechController {
     }
 
     public void stopAll() {
-        // flowing must be cleared too, not just the motor stopped -- leaving
         flowing = false;
         stopIntake(); stopShooterMotors(); robot.conveyorMot.setPower(0);
         scoopTo(FLOWER_REST);
@@ -1415,10 +1303,12 @@ public class MechController {
 
     public void allTelemetry() {
         telemetry.addData("STATE ", "%s / %s", currentState, operationStatus);
-        telemetry.addData("BALLS ", "P%d N%d = %d/4    shots %d  dip %d%s",
-                countPollen, countNectar, totalBalls(),
-                shotsCompleted, pollenExits + nectarExits,
-                COUNT_FLOW_BY_DIP ? "  (DIP IS PRIMARY)" : "");
+        telemetry.addData("BALLS ", "P%d N%d = %d/4    shots %d",
+                countPollen, countNectar, totalBalls(), shotsCompleted);
+        telemetry.addData("EXITS ", "wheel saw P%d N%d = %d   belt counted %d   drift %+d   %s",
+                pollenExits, nectarExits, pollenExits + nectarExits,
+                shotsCompleted, (pollenExits + nectarExits) - shotsCompleted,
+                COUNT_FLOW_BY_DIP ? "DIP IS PRIMARY" : "belt is primary");
         telemetry.addData("WHY   ", whyLine());
         ShooterAdapter.Target seen = vision.getRaisedTarget();
         ShooterAdapter.Target guess = seen != null
@@ -1428,7 +1318,6 @@ public class MechController {
                                           poseX, poseY, poseHeadingDeg)
                           : "POSE NOT SET",
                 seen != null ? seen + " (tag)"
-                             // "none", not String.valueOf(null) -- a line
                              : (guess == null ? "none (no hive zone)"
                                               : guess + " (by zone)"));
         telemetry.addData("VISION", "%d tags [%s] %d ours   lock %d/%d   flower %d  pipe %d",
@@ -1447,7 +1336,6 @@ public class MechController {
         telemetry.addData("LOOP  ", "%.1fms  %.0fHz   worst %.0f",
                 loopMsAvg, loopMsAvg > 0 ? 1000.0 / loopMsAvg : 0, loopMsWorst);
 
-        // Nearest ball worth having, only while sweeping the field.
         if (currentState == MechState.INTAKE_FIELD) {
             BallDetector.Detection d = vision.nearestWantedBall(allianceTeamNectar());
             telemetry.addData("BALL", d == null
@@ -1482,58 +1370,24 @@ public class MechController {
 
         // ---- full diagnostic page ------------------------------------------
         telemetry.addLine();
-        telemetry.addData("Shot phase", "%s %s%s%s", shotPhase, activeShotBall,
-                flowing ? "  [FLOWING]" : "", preSpinning ? "  [PRE-SPUN]" : "");
-        telemetry.addData("Exits", "%s  dip pollen %d  dip nectar %d  belt shots %d",
-                COUNT_FLOW_BY_DIP ? "dip=PRIMARY" : "belt=PRIMARY",
-                pollenExits, nectarExits, shotsCompleted);
-        telemetry.addData("Fire gate", "%s   %.1f in/s  %.1f deg/s  %s",
+        telemetry.addData("GATE  ", "%s   %.1f in/s  %.1f deg/s  %s",
                 inFiringPosition() ? "in zone" : "no zone/target",
                 speedInPerSec, turnDegPerSec,
                 isSteadyEnoughToFire() ? "steady" : "MOVING");
-        telemetry.addData("Tag filter", "%d/%d agreed   %d lost",
-                vision.getCandidateFrames(), VisionController.REQUIRED_STABLE_FRAMES,
-                vision.getLostFrames());
-        telemetry.addData("Phase ms", "aim %d  spin %d  feed %d  -> cycle %d",
-                lastAimMs, lastSpinMs, lastFeedMs, lastCycleMs);
-        if (!shotNote.isEmpty()) telemetry.addData("Note", shotNote);
-
-        telemetry.addLine();
-        telemetry.addData("Alliance", shooter.getAlliance());
-        telemetry.addData("Operation Complete", isOperationComplete());
-        telemetry.addLine();
-        // Pose is on WHERE already; this is the same number to one more
-        telemetry.addData("Pose exact", poseValid
-                ? String.format("%.1f, %.1f @ %.1f deg", poseX, poseY, poseHeadingDeg)
-                : "NOT SET - OpMode must call updatePose()");
-        telemetry.addData("Raised CELL", vision.getRaisedTarget() == null
-                ? "unknown" : vision.getRaisedTarget()
-                  + "  (tag " + vision.getLastSeenTagId()
-                  + ", " + vision.getVisibleTagCount() + " in view)");
         if (lastPlan != null && lastPlan.valid) {
-            telemetry.addData("Fire mode", lastPlan.mode);
-            telemetry.addData("Plan yaw", "%.1f deg", lastPlan.yawDeg);
-            telemetry.addData("Pollen shot", "%.1f in  hood %.0f  %.0f rpm  %.0f%%",
+            telemetry.addData("POLLEN", "%.1f in  hood %.0f  %.0f rpm  turret %.1f",
                     lastPlan.pollen.rangeIn, lastPlan.pollen.hoodDeg,
-                    lastPlan.pollen.rpm, lastPlan.pollen.confidencePct);
-            telemetry.addData("Nectar shot", "%.1f in  hood %.0f  %.0f rpm  %.0f%%",
+                    lastPlan.pollen.rpm, lastPlan.pollen.turretDeg);
+            telemetry.addData("NECTAR", "%.1f in  hood %.0f  %.0f rpm  turret %.1f",
                     lastPlan.nectar.rangeIn, lastPlan.nectar.hoodDeg,
-                    lastPlan.nectar.rpm, lastPlan.nectar.confidencePct);
+                    lastPlan.nectar.rpm, lastPlan.nectar.turretDeg);
+            telemetry.addData("MODE  ", "%s   yaw %.1f", lastPlan.mode, lastPlan.yawDeg);
         } else {
-            telemetry.addData("Fire plan", "none");
+            telemetry.addData("PLAN  ", "none");
         }
-        telemetry.addData("Timeout headroom", "spin %d/%d   feed %d/%d",
-                lastSpinMs, SHOOTER_SPINUP_TIMEOUT_MS, lastFeedMs, SHOOTER_FEED_TIMEOUT_MS);
-        telemetry.addLine();
-        telemetry.addData("CELL estimate", "%d nectar + %d pollen = %d/%d pts (PROVISIONAL)",
+        telemetry.addData("CELL  ", "%d N + %d P = %d/%d",
                 cellNectarIn, cellPollenIn, cellPoints(), CELL_TIP_THRESHOLD);
-        telemetry.addLine();
-        telemetry.addData("Field rejection active", reversingWrongBall);
-        telemetry.addData("Waiting for rejected ball", waitingForWrongBallClear);
-        telemetry.addData("Flower nectar rejection", rejectingFlowerNectar);
-        // Bed sensors are on the BELT line; the cached flags are not re-read
-        telemetry.addData("Conveyor target ticks", conveyorTargetPosition);
-        telemetry.addData("Feed target ticks", feedTargetPosition);
+        if (!shotNote.isEmpty()) telemetry.addData("NOTE  ", shotNote);
         turret.addTelemetry(telemetry);
         // Do not call pinpoint.update() here; PedroPathing/localizer owns it.
         robot.addPinpointTelemetry(telemetry);

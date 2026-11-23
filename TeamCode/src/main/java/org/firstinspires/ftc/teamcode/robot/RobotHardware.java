@@ -50,15 +50,12 @@ public class RobotHardware {
     public final Limelight3A limeLight;
 
     // Belt-forward direction. ShooterCalibration reads it: under setPower the
-    // flag decides which way the belt runs, unlike RUN_TO_POSITION.
     public static final DcMotor.Direction CONVEYOR_DIR = DcMotor.Direction.REVERSE;
 
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
 
-    // Measured 14 Nov with the flywheels fitted.
     public static final double SHOOTER_KF = 14.08;
 
-    // P corrects what F gets wrong, so it is sized from F: 0.1 x F
     public static final double SHOOTER_KP = 1.53;
     public static final double SHOOTER_KI = 0.15;
     public static final double SHOOTER_KD = 0.0;
@@ -68,31 +65,15 @@ public class RobotHardware {
     // Flywheel. Single source: ShooterRed/Blue and ShooterCalibration read it.
     public static final double SHOOTER_WHEEL_DIA_M = 0.072;
 
-    // Fraction of flywheel surface speed the ball leaves with. Every rpm in
-    // the shot table scales with it. Measured 17 Nov, 9 shots per ball; the
     // two balls grip differently, so they do not share a value.
-    //
-    // Nectar is trustworthy: rms 2.7 in across six hood angles.
-    // Pollen is NOT: rms 6.4 in, and the error grows toward mid-hood, which
-    // points at the replaced pollen hood's degree map. Re-measure it.
-    // MEASURED 22 Nov, step 29, four stands. Nectar barely moved across the
-    // whole range (0.429-0.434), so the nectar speed table is sound.
     public static double SHOOTER_EFF_NECTAR = 0.432;
     // RE-MEASURED 22 Nov, streaming. Step 29 calibration fires ONE ball on a
-    // fully spun-up wheel and gave 0.465; four balls on one continuous belt
-    // run need 0.435, which is 7% more rpm. That gap is the wheel sagging
-    // under balls two to four, so the match value is this one.
-    // The original 0.360 was badly wrong, so every pollen shot was over-sped.
-    // One constant now serves every range because POLLEN_V was reshaped to
-    // take the slope -- changing this value rescales the whole table at once,
-    // so it never needs the array touched.
     public static double SHOOTER_EFF_POLLEN = 0.435;
 
     public static double shooterEfficiency(boolean nectar) {
         return nectar ? SHOOTER_EFF_NECTAR : SHOOTER_EFF_POLLEN;
     }
 
-    // Limelight 3A, on USB 3.
     public static final double LIMELIGHT_BACK_IN   = 15.066 / 25.4;   // 0.5932
     public static final double LIMELIGHT_HEIGHT_IN = 441.327 / 25.4;  // 17.375
     public static final double LIMELIGHT_PITCH_DEG = 45.0;
@@ -105,15 +86,12 @@ public class RobotHardware {
     public static final double C270_PITCH_DEG = -40.0;   // below horizontal
     public static final double C270_DIAGONAL_FOV_DEG = 55.0;
 
-    // Intake wheel centre, from CAD 6 Nov.
     public static final double INTAKE_RIGHT_IN  = 1.732;    //  44.000 mm
     public static final double INTAKE_BEHIND_IN = 10.181;   // 258.590 mm
     public static final double INTAKE_HEIGHT_IN = 3.797;    //  96.440 mm
 
-    // THE COLLECTING POSE.
     public static final double FLOWER_COLLECT_IN = 14.535;  // 369.193 mm
 
-    // Robot centre to the FRONT BUMPER FACE. The datum for shooter
     // calibration distances.
     public static final double BUMPER_FWD_IN = 8.786;       // 223.175 mm
 
@@ -126,7 +104,6 @@ public class RobotHardware {
     public RobotHardware(HardwareMap hwMap, Telemetry telemetry) {
         this.telemetry = telemetry;
 
-        // Ports as configured on the robot, 13 Nov.
         conveyorMot = hwMap.get(DcMotor.class, "conveyorMot");                   // C3
         intakeMot = hwMap.get(DcMotor.class, "intakeMot");                       // E3
 
@@ -171,7 +148,6 @@ public class RobotHardware {
         conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         conveyorMot.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // Both FORWARD, measured on the built robot 13 Nov -- both needed Y
         configureShooter(nectarShootingMot, DcMotor.Direction.FORWARD);
         configureShooter(pollenShootingMot, DcMotor.Direction.FORWARD);
     }
@@ -180,7 +156,6 @@ public class RobotHardware {
         m.setDirection(dir);
         m.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         m.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        // Coast, not brake: braking a flywheel between shots wastes spin-up
         m.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         m.setVelocityPIDFCoefficients(SHOOTER_KP, SHOOTER_KI, SHOOTER_KD, SHOOTER_KF);
     }

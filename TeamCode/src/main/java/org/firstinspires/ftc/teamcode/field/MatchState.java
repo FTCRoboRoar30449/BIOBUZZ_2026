@@ -1,6 +1,5 @@
 package org.firstinspires.ftc.teamcode.field;
 
-// Carries pose and inventory from autonomous into TeleOp.
 public final class MatchState {
 
     public enum Alliance { RED, BLUE }

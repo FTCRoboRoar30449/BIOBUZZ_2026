@@ -2,7 +2,6 @@ package org.firstinspires.ftc.teamcode.field;
 
 import com.pedropathing.math.Pose;
 
-// EVERY field pose. Origin at the RED garden corner, x to BLUE, y to SCORING.
 public final class Red {
 
     private Red() {}
@@ -16,15 +15,9 @@ public final class Red {
 
     // ---- starts ----
     public static final Pose START            = at(56.0,  12.0,  90);
-    // Faces -90, down the field. It used to face +90, into a wall 12 in
-    // away, which forced a 180 deg step on the first leg of every far route.
-    // PLACE THE ROBOT FACING THE HIVE, not the wall behind it.
     public static final Pose START_FAR        = at(60.2, 131.7, -90);
 
     // ---- shooting ----
-    // Three per CELL, spread across that CELL's manual RANGE box so a
-    // blocked spot has two alternatives. All 31 in out, all 92.9% on the
-    // weaker ball, all divergence 0.0 so both balls go together.
     public static final Pose SHOOT_AUD_WEST   = at(43.0,  33.0, 336);
     public static final Pose SHOOT_AUD_MID    = at(53.0,  29.0, 356);
     public static final Pose SHOOT_AUD_EAST   = at(74.0,  32.0,  36);
@@ -34,35 +27,14 @@ public final class Red {
     public static final Pose SHOOT_SCO_EAST   = at(80.0, 108.0, 146);
 
     // ---- the shot that actually scores, 22 Nov ----
-    // Offset so the POLLEN BARREL, not the robot centre, is dead in line
-    // with the cell: pollen turret comes out at 0.00 deg. The turret is open
-    // loop with 7.97 deg of measured gear lash -- 1.71 in of lateral error at
-    // this range for half of it -- and a turret that never leaves home
-    // cannot spend any of it. Range is still 24.5 in at hood 75, the only
-    // one measured at 0.88. Nectar takes -18.2 at 25.8 in, which still
-    // solves; with a 4-pollen preload it never fires in auto anyway.
-    // x = goalX -+ AXIS_LAT, sign set by the heading.
     public static final Pose SHOOT_CLOSE_AUD  = at(55.31,  31.25,  90);
     public static final Pose SHOOT_CLOSE_SCO  = at(63.19, 112.75, -90);
 
-    // Names the cycle autos use. REVERTED 22 Nov after a field test: pointing
-    // these at SHOOT_CLOSE_SCO put a 180 deg heading step into six routes,
-    // because leg() holds the TARGET heading from the first instant and this
-    // drivetrain lurches on a step that large. The only auto that still ran
-    // clean was the one route with no turn on any leg. The close pose is
-    // worth 0.88 against 0.33, but not at the price of not arriving.
     public static final Pose SHOOT_NEAR       = SHOOT_CLOSE_AUD;
     public static final Pose SHOOT_MID        = SHOOT_CLOSE_SCO;
     public static final Pose SHOOT_FAR        = SHOOT_CLOSE_SCO;
 
     // ---- collecting ----
-    // Waypoints the garden runs route through. They take the heading of the
-    // pose AFTER them, so the short leg does the turning and the long leg is
-    // pure translation -- this drivetrain lurches when asked to do both.
-    // RED's sit on the direct line and change nothing; BLUE's are what keep
-    // its routes off the hive. See Blue.GARDEN_VIA.
-    // A short leg whose only job is to carry a big heading change, so the
-    // long leg after it is pure translation.
     public static final Pose GARDEN_TURN      = at(48.0,  16.0,  90);
     public static final Pose FLOWER_NEAR_TURN = at(40.0,  36.0, 180);
     public static final Pose GARDEN_VIA       = at(32.0,  26.5,  90);
@@ -73,14 +45,7 @@ public final class Red {
     public static final Pose GARDEN_SWEEP     = at(20.0,   8.0, 180);
     public static final Pose GARDEN_FAR       = at(10.7, 133.2,  90);
 
-    // Intake sits FLOWER_COLLECT_IN ahead of centre, so these put it on the
-    // flowers at 4,48 and 48,140.
     public static final Pose FLOWER_NEAR      = at(18.5,  48.0, 180);
-    // All four flower approaches, in FIELD coordinates -- identical in both
-    // alliance classes, because a flower does not move when you change sides.
-    // ShooterAdapter's flowerZones already cover all four; the Y macro used
-    // to look at only this alliance's two, which is why it kept going to the
-    // same one. Each sits where the INTAKE lands on the flower.
     public static final Pose FLOWER_RED_AUD   = at( 18.5,  48.0, 180);
     public static final Pose FLOWER_RED_SCO   = at( 48.0, 125.5,  90);
     public static final Pose FLOWER_BLU_AUD   = at( 96.0,  18.5, 270);
@@ -104,6 +69,5 @@ public final class Red {
     public static final Pose C_START_FLOWER   = at(60.0, 120.0, 270);
     public static final Pose C_FLOWER_SHOOT   = at(48.0, 120.0, 270);
     public static final Pose C_SHOOT_SOUTH    = at( 8.0, 102.0,   0);
-    // Keeps SHOOT_SCO_EAST -> PARK_FAR north of the hive frame.
     public static final Pose C_FAR_PARK       = at(46.0, 125.0,   0);
 }

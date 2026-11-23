@@ -7,8 +7,6 @@ import org.firstinspires.ftc.teamcode.field.Red;
 import org.firstinspires.ftc.teamcode.robot.MechState;
 import org.firstinspires.ftc.teamcode.robot.ShooterAdapter;
 
-// Mirror of the BLUE audience run.
-// Shoots from the measured best spot: 24.5 in, hood 75, turret +9.5.
 @Autonomous(name = "RED A preload shoot park", group = "Red")
 public class RED_A_Shoot_PreL_Park_field extends Auto_Base {
 

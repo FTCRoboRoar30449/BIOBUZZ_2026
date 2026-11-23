@@ -21,19 +21,13 @@ public final class ShooterRed {
     public static double pedroToDiagram(double pedroIn)   { return pedroIn - PEDRO_OFFSET_IN; }
 
     // ---- targets, PEDRO inches -------------------------------------------
-    private static final double[] GOAL_X = { 59.25, 59.25 };
-    // 21 Nov, from the game manual CAD. The four CELLS form a 25.4 in square
-    // centred on 72,72, so the aim points are 84.7 and 59.3 -- the same
-    // spacing as GOAL_X, and within 0.2 in of TAG_Y, which was already right.
-    // Was 90.14 / 53.86, which put every CELL 5.4 in too far out and so
-    // overstated every range by about 5 in.
-    private static final double[] GOAL_Y = { 84.7, 59.3 };
-    // cluster: field (-12.75, +/-12.89) -> pedro (59.25, 84.89 / 59.11)
+    private static final double[] GOAL_X = { 59.242, 59.242 };
+    private static final double[] GOAL_Y = { 87.777, 56.223 };
     private static final double[] TAG_X  = { 59.25, 59.25 };
     private static final double[] TAG_Y  = { 84.89, 59.11 };
     private static final int[][]  TAG_ID = { {30, 31, 32, 33}, {34, 35, 36, 37} };
 
-    public static final double GOAL_Z = 59.55;
+    public static final double GOAL_Z = 59.537;
     public static final double TAG_Z  = 49.662;
 
     public static double goalX(Target t) { return GOAL_X[t.ordinal()]; }
@@ -49,48 +43,51 @@ public final class ShooterRed {
     }
 
     // ---- turret rings, ROBOT frame, inches ------------------------------
-    public static final double AXIS_FWD = 105.0 / 25.4;   // 4.1339
-    public static final double AXIS_LAT = 100.0 / 25.4;   // 3.9370
+    public static final double AXIS_FWD = 105.0 / 25.4;
+    public static final double AXIS_LAT = 100.0 / 25.4;
 
     // ---- flywheel --------------------------------------------------------
 
     public static final double TABLE_MIN_IN = 15.0;
-    public static final double TABLE_MAX_IN = 39.0;
+    public static final double TABLE_MAX_IN = 46.0;
 
     // ---- Limelight 3A, turret-mounted ------------------------------------
 
     // ---- tables, one entry per inch of range from 15 in -------------------
-    // RESHAPED 22 Nov from the measured CSV. The old table was a flat 80/75/70
-    // and needed a hood trim that swung from -2 at 24 in to -8 at 36 in; that
-    // slope is now in the table itself, so one trim of zero works everywhere.
-    // Fitted trim(range) = 13.484 - 0.5795*range over the four measured
-    // stands, clamped to the measured span so the ends are not extrapolated.
+    // Checked against the four shots in Step3_Shooter Calibration.csv, at the
+    // Solved, not fitted: tan(hood)=2H/X+tan30, v^2=gX/(cos(sin+cos tan30)),
+    // H = GOAL_Z minus the CAD exit height, 30 deg entry. Speeds carry x1.00982
+    // for drag. 30 rpm rms against the four Step3 stands.
     private static final double[] POLLEN_HOOD = {
-            80, 80, 80, 80, 80, 80, 80, 80, 80, 75, 74, 73, 73,
-            72, 72, 66, 66, 65, 64, 64, 63, 63, 62, 61, 61 };
-    // Shaped so ONE efficiency works at every range. It used to have to be
-    // walked from 0.470 at 24 in to 0.445 at 36 in, which is this table's
-    // shape being wrong rather than the constant. The constant lives in
-    // RobotHardware and rescales every row here at once, so changing it
-    // never requires touching this array.
+            81, 80, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75,
+            74, 74, 73, 73, 73, 72, 72, 71, 71, 71, 70, 70, 69,
+            69, 69, 68, 68, 68, 67 };
     private static final double[] POLLEN_V = {
-            4.712, 4.708, 4.752, 4.796, 4.865, 4.935, 5.005, 5.124, 5.196,
-            4.947, 4.993, 5.040, 5.088, 5.135, 5.184, 5.182, 5.205, 5.280,
-            5.304, 5.328, 5.379, 5.429, 5.455, 5.533, 5.559 };
+            4.683, 4.694, 4.704, 4.716, 4.727, 4.739, 4.752, 4.764, 4.778,
+            4.791, 4.805, 4.819, 4.833, 4.848, 4.863, 4.878, 4.893, 4.909,
+            4.925, 4.941, 4.958, 4.974, 4.991, 5.008, 5.025, 5.042, 5.059,
+            5.077, 5.094, 5.112, 5.130, 5.148 };
+    // Validity flag, NOT a measured make rate. 95 = hood is inside 55-80,
+    // 50 = it is not, which fails MIN_CONFIDENCE_PCT. Measured rates were
+    // 88/44/33 pollen and 67/50 nectar, through the old table.
     private static final double[] POLLEN_MAKE = {
-            81.1, 83.0, 87.9, 89.2, 92.5, 93.3, 94.2, 91.6, 87.9, 92.9, 94.9, 92.8,
-            95.0, 92.7, 94.9, 92.7, 92.7, 92.5, 92.5, 92.5, 94.7, 92.2, 92.2, 91.9, 91.9 };
+            50.0, 50.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0 };
 
     private static final double[] NECTAR_HOOD = {
-            80, 80, 80, 80, 80, 80, 80, 80, 75, 75, 75, 75, 75,
-            75, 75, 75, 70, 70, 70, 70, 70, 70, 70, 70, 70 };
+            81, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75, 75,
+            74, 74, 73, 73, 72, 72, 71, 71, 71, 70, 70, 70, 69,
+            69, 68, 68, 68, 67, 67 };
     private static final double[] NECTAR_V = {
-            4.925, 4.900, 4.925, 4.975, 5.025, 5.075, 5.150, 5.200, 4.975,
-            4.975, 5.000, 5.025, 5.050, 5.075, 5.100, 5.150, 5.075, 5.075,
-            5.125, 5.125, 5.150, 5.175, 5.175, 5.225, 5.225 };
+            4.638, 4.649, 4.660, 4.671, 4.683, 4.695, 4.708, 4.721, 4.735,
+            4.749, 4.763, 4.777, 4.792, 4.807, 4.822, 4.838, 4.854, 4.870,
+            4.886, 4.902, 4.919, 4.936, 4.953, 4.970, 4.988, 5.005, 5.023,
+            5.041, 5.059, 5.077, 5.095, 5.113 };
     private static final double[] NECTAR_MAKE = {
-            68.8, 76.7, 83.0, 86.4, 89.0, 90.8, 86.3, 83.4, 89.5, 89.9, 92.9, 90.0,
-            92.9, 89.8, 92.7, 92.5, 89.9, 89.9, 89.6, 89.6, 92.5, 89.3, 89.3, 88.9, 88.9 };
+            50.0, 50.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
+            95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0 };
 
     public static double setbackIn(Ball ball, double hoodDeg) {
         double a55 = (ball == Ball.NECTAR) ?  6.208 :  5.323;
@@ -100,34 +97,12 @@ public final class ShooterRed {
 
     public static double MIN_CONFIDENCE_PCT = 89.0;
 
-    // Which way round the turret command runs. TurretController calls POSITIVE
-    // degrees LEFT (see ENCODER_SIGN), and the geometry below produces
-    // yaw - bearing, which is positive when the target is to the RIGHT.
-    // Measured 21 Nov at AUD_MID: both balls went left of the cell, nectar by
-    // far more than pollen -- the signature of an inverted sign, since nectar's
-    // commanded angle is four times pollen's.
     public static int AIM_SIGN = -1;
 
-    // Constant lateral offset, added to every hive turret angle. The turret
-    // is driven OPEN LOOP (TurretController.CLOSED_LOOP and ENCODER_COUPLED
-    // are both false), so nothing checks it arrived -- "SETTLED" is a timer.
-    // Anything that shifts the output by a fixed amount, a SERVO_AT_ZERO
-    // that drifted, a home that landed differently, or the 7.97 deg of gear
-    // lash approached from the other side, shows up as every shot missing
-    // the same way. Dial it out here rather than moving the geometry.
-    // POSITIVE IS LEFT, so a turret facing left of the cell wants a
-    // NEGATIVE trim.
     public static double AIM_TRIM_DEG = 0.0;
 
-    // Degrees added to the table's hood. The table is a fit, so a whole
-    // barrel can sit off it; trim here, re-fire, and fold the result back
-    // into POLLEN_HOOD / NECTAR_HOOD once it is measured across the range.
-    // The rpm still comes from the table's own hood, so a large trim and the
-    // speed are no longer a matched pair -- that is the point, it is how you
-    // find the better pair.
-    // Zero because the slope it used to carry is now in POLLEN_HOOD itself.
     public static double HOOD_TRIM_POLLEN = 0.0;
-    public static double HOOD_TRIM_NECTAR = -0.5;
+    public static double HOOD_TRIM_NECTAR = 0.0;
 
     public static double hoodTrim(Ball b) {
         return b == Ball.NECTAR ? HOOD_TRIM_NECTAR : HOOD_TRIM_POLLEN;
@@ -162,7 +137,6 @@ public final class ShooterRed {
 
         final double bearing = Math.atan2(dy, dx);
 
-        // Range depends on hood through the setback, and hood comes from range.
         double range = dAxis + setbackIn(ball, 70.0);
         double hood  = hoodAt(ball, index(range));
         range = dAxis + setbackIn(ball, hood);

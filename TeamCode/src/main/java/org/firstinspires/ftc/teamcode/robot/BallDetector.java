@@ -34,31 +34,24 @@ public class BallDetector implements VisionProcessor {
     }
 
     // ---- HSV gates, OpenCV units: H 0-179, S 0-255, V 0-255 --------------
-    public static Scalar YELLOW_LO = new Scalar(21, 90, 95);
+    public static Scalar YELLOW_LO = new Scalar(21, 50, 135);
     public static Scalar YELLOW_HI = new Scalar(37, 255, 255);
-    // Red wraps around 0, so it needs two windows.
-    // Only needed if the red ball reads near H 179 as well as near 0. The
-    // one measured 21 Nov sits at H 2-19, so one window covers it.
-    public static boolean RED_WRAP = false;
-    public static double RED_WRAP_FROM = 165;
+    public static boolean RED_WRAP = true;
+    public static double RED_WRAP_FROM = 163;
     public static Scalar RED1_LO = new Scalar(0, 80, 100);
     public static Scalar RED1_HI = new Scalar(10, 255, 255);
     public static Scalar RED2_LO = new Scalar(163, 80, 100);
     public static Scalar RED2_HI = new Scalar(179, 255, 255);
-    // Blue measured V 255 -- clipped, the camera is blowing this ball out.
     public static Scalar BLUE_LO = new Scalar(96, 75, 80);
     public static Scalar BLUE_HI = new Scalar(118, 255, 255);
 
-    // Ball diameters, MEASURED 14 Nov.
     public static double POLLEN_DIAM_IN = 2.8;
     public static double NECTAR_DIAM_IN = 3.6;
 
-    // Cheap pre-filter only.
     public static double MIN_AREA_PX = 1200;
     public static double MAX_AREA_PX = 60000;
     public static double MIN_CIRCULARITY = 0.55;
 
-    // Size consistency.
     public static boolean SIZE_CHECK = true;
     public static double SIZE_TOL_LO = 0.35;
     public static double SIZE_TOL_HI = 2.50;
@@ -67,7 +60,6 @@ public class BallDetector implements VisionProcessor {
         return t == BallType.POLLEN ? POLLEN_DIAM_IN : NECTAR_DIAM_IN;
     }
 
-    // What a ball of this type SHOULD cover at this range.
     public double expectedAreaPx(BallType t, double rangeIn, double bearingDeg) {
         double diam = diameterIn(t);
         double g0 = rangeIn * Math.cos(Math.toRadians(bearingDeg));
@@ -91,7 +83,6 @@ public class BallDetector implements VisionProcessor {
     private int imgW = 640, imgH = 480;
     private double fx, fy, cx, cy;
 
-    // robot pose, pushed in each loop so detections can be reported in field
     private volatile double poseX = 72, poseY = 72, poseYawDeg = 0;
     private volatile boolean poseValid = false;
 
@@ -99,7 +90,6 @@ public class BallDetector implements VisionProcessor {
     private List<Detection> latest = new ArrayList<Detection>();
     private int pollenMaskPx = 0;
 
-    // scratch, reused so the processor does not allocate every frame
     private final Mat hsv = new Mat(), m1 = new Mat(), m2 = new Mat(), mask = new Mat();
 
     private volatile double centreH = 0, centreS = 0, centreV = 0;
@@ -142,7 +132,6 @@ public class BallDetector implements VisionProcessor {
         List<Detection> found = new ArrayList<Detection>();
 
         Core.inRange(hsv, YELLOW_LO, YELLOW_HI, mask);
-        // Count the pixels BEFORE collect() applies its shape filter
         int pollenPx = Core.countNonZero(mask);
         collect(mask, BallType.POLLEN, found);
 
@@ -159,7 +148,6 @@ public class BallDetector implements VisionProcessor {
                 return Double.compare(a.rangeIn, b.rangeIn);
             }
         });
-        // Only while accepting.
         synchronized (lock) {
             if (accepting) { latest = found; pollenMaskPx = pollenPx; }
         }
@@ -179,7 +167,6 @@ public class BallDetector implements VisionProcessor {
         roi.release();
         centreH = mean.val[0]; centreS = mean.val[1]; centreV = mean.val[2];
 
-        // The delivered frame may carry an alpha channel; only the first three
         Mat rawRoi = raw.submat(r);
         Scalar rawMean = Core.mean(rawRoi);
         rawRoi.release();
@@ -193,11 +180,6 @@ public class BallDetector implements VisionProcessor {
                 YELLOW_HI = new Scalar(hHi, 255, 255);
                 break;
             case NECTAR_RED:
-                // hLo..hHi is ONE window, read like the other two colours.
-                // It used to treat hLo as the TOP of a 0-anchored window and
-                // hHi as the BOTTOM of a 179-anchored one, so the measured
-                // 0..28 became [0,0] plus [28,179]: an empty red band and a
-                // second one matching yellow, green and blue.
                 RED1_LO = new Scalar(hLo, sMin, vMin);
                 RED1_HI = new Scalar(hHi, 255, 255);
                 RED2_LO = new Scalar(RED_WRAP ? RED_WRAP_FROM : 180, sMin, vMin);
@@ -221,9 +203,6 @@ public class BallDetector implements VisionProcessor {
         }
     }
 
-    // Why contours died, per colour, for the frame just processed. Without
-    // this "nothing seen" gives no way to tell a colour fault from a shape
-    // one, and the two have opposite fixes.
     public static final class Reject {
         public int contours, area, circ, horizon, size, kept;
         public String line() {
@@ -238,7 +217,6 @@ public class BallDetector implements VisionProcessor {
     private void collect(Mat binary, BallType type, List<Detection> out) {
         Reject rj = rejects[type.ordinal()];
         rj.contours = rj.area = rj.circ = rj.horizon = rj.size = rj.kept = 0;
-        // Open then close: kill speckle, then fill the holes in a perforated
         Mat k = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
         Imgproc.morphologyEx(binary, binary, Imgproc.MORPH_OPEN, k);
         Imgproc.morphologyEx(binary, binary, Imgproc.MORPH_CLOSE, k);
@@ -257,20 +235,17 @@ public class BallDetector implements VisionProcessor {
             if (circ < MIN_CIRCULARITY) { rj.circ++; continue; }
 
             Rect r = Imgproc.boundingRect(c);
-            // The ball TOUCHES the floor at the bottom of its silhouette.
             double u = r.x + r.width / 2.0;
             double v = r.y + r.height;
 
             double[] g = groundPoint(u, v);
-            if (g == null) { rj.horizon++; continue; }   // ray never meets the floor
+            if (g == null) { rj.horizon++; continue; }
 
-            // Predict the blob's size from the range the GEOMETRY gave us
             double diam = diameterIn(type);
             double dx = g[0] - (-C270_BEHIND_IN);
             double dy = g[1] - (-C270_RIGHT_IN);
             double dz = C270_HEIGHT_IN - diam / 2.0;
             double slant = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            // fx is set in init(), which the VisionPortal calls before any
             if (SIZE_CHECK && fx > 0 && slant > 1e-6) {
                 double predDpx = fx * diam / slant;
                 double predArea = Math.PI / 4.0 * predDpx * predDpx;
@@ -291,7 +266,6 @@ public class BallDetector implements VisionProcessor {
         double yn = (v - cy) / fy;
 
         double p = Math.toRadians(C270_PITCH_DEG);
-        // Camera basis in robot coords.
         double[] fwd   = { -Math.cos(p), 0, -Math.sin(p) };
         double[] right = { 0, 1, 0 };
         double[] down  = { Math.sin(p), 0, -Math.cos(p) };
@@ -299,7 +273,7 @@ public class BallDetector implements VisionProcessor {
         double rx = fwd[0] + xn * right[0] + yn * down[0];
         double ry = fwd[1] + xn * right[1] + yn * down[1];
         double rz = fwd[2] + xn * right[2] + yn * down[2];
-        if (rz >= -1e-6) return null;                 // at or above the horizon
+        if (rz >= -1e-6) return null;
 
         double camX = -C270_BEHIND_IN, camY = -C270_RIGHT_IN, camZ = C270_HEIGHT_IN;
         double t = -camZ / rz;
@@ -314,7 +288,6 @@ public class BallDetector implements VisionProcessor {
 
     // ---- what the FSM asks for -------------------------------------------
 
-    // Called when the processor is switched off.
     private boolean accepting = true;
 
     public void setAccepting(boolean on) {
@@ -342,7 +315,6 @@ public class BallDetector implements VisionProcessor {
             int n = 0;
             for (Detection d : latest) if (d.type == BallType.POLLEN) n++;
 
-            // TOUCHING BALLS.
             if (n == 0 && pollenMaskPx >= MIN_AREA_PX) return 1;
             return n;
         }
@@ -372,6 +344,5 @@ public class BallDetector implements VisionProcessor {
     public void onDrawFrame(Canvas canvas, int onscreenWidth, int onscreenHeight,
                             float scaleBmpPxToCanvasPx, float scaleCanvasDensity,
                             Object userContext) {
-        // Nothing drawn: the driver station preview costs frame rate
     }
 }

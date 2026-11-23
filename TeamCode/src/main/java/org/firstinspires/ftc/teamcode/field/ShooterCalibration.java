@@ -29,24 +29,13 @@ public class ShooterCalibration extends LinearOpMode {
     public static String POLLEN_BED     = "conveyorPollen";
     public static String NECTAR_BED     = "conveyorNectar";
 
-    // Let the servo reach the bed before the belt pushes a ball at it.
     public static long FEED_SETTLE_MS = 150;
     // A is hold-to-run: counted strokes do not clear the tunnel. Releasing A
-    // stops the belt; this is only the backstop if A is held down.
     public static long FEED_MAX_MS = 3000;
 
-    // Measure to the FRONT BUMPER FACE instead of plumbing down from the
-    // hood. The flight model starts at the ball's exit point, so the gap
-    // between the two is added back before fitting.
-    //
-    // Datum is RobotHardware.BUMPER_FWD_IN, measured 17 Nov. A wrong datum
-    // biases every sample equally, which the fit absorbs as a wrong
-    // efficiency rather than showing up as scatter.
     public static boolean MEASURE_FROM_BUMPER = true;
     public static double BUMPER_FWD_IN = RobotHardware.BUMPER_FWD_IN;
 
-    // Exit sits ShooterRed.AXIS_FWD ahead of centre, less the hood-dependent
-    // setback, so the correction shifts about half an inch across the range.
     private static double exitFwdOfCentreIn(boolean nectar, double hoodDeg) {
         return ShooterRed.AXIS_FWD - ShooterRed.setbackIn(
                 nectar ? ShooterRed.Ball.NECTAR : ShooterRed.Ball.POLLEN, hoodDeg);
@@ -60,7 +49,6 @@ public class ShooterCalibration extends LinearOpMode {
         return MEASURE_FROM_BUMPER ? measured + bumperToExitIn(nectar, hoodDeg) : measured;
     }
 
-    // TAKEN FROM RobotHardware, not copied, so the rig cannot drift away
     public static double TICKS_PER_REV   = RobotHardware.SHOOTER_TICKS_PER_REV;
     public static double VELOCITY_PIDF_P = RobotHardware.SHOOTER_KP;
     public static double VELOCITY_PIDF_I = RobotHardware.SHOOTER_KI;
@@ -95,16 +83,12 @@ public class ShooterCalibration extends LinearOpMode {
     private final List<Sample> samples = new ArrayList<Sample>();
 
     // ---- UI state ---------------------------------------------------------
-    private int field = 0;                       // 0 ball, 1 hood, 2 rpm, 3 distance, 4 Cd
+    private int field = 0;
     private boolean nectar = false;
     private double hoodDeg = 70.0;
-    // The six shooting presets ask for pollen 3813 rpm at hood 70 and
-    // nectar 3123 at hood 75. Across the whole table it is pollen 3684-3887
-    // and nectar 3076-3215, always hood 70/75/80. Start on the pollen
-    // working point; LEFT on the ball field switches the nectar default in.
     private double targetRpm = 3813.0;
     private double measuredIn = 0.0;
-    private double cd = 0.55;   // pinned; see runCdDiagnostic()
+    private double cd = 0.55;
     private boolean spinning = false;
     private boolean feeding = false;
     private long feedStartMs = 0;
@@ -122,9 +106,6 @@ public class ShooterCalibration extends LinearOpMode {
         nectarMotor = tryMotor(NECTAR_MOTOR);
         pollenHood  = tryServo(POLLEN_HOOD);
         nectarHood  = tryServo(NECTAR_HOOD);
-        // This OpMode never aims. If the turret is left off zero the ball
-        // flies sideways and the measured distance is meaningless, so park
-        // it straight ahead and say so.
         turretServo = tryServo(TURRET_SERVO);
         if (turretServo != null) {
             turretServo.setPosition(TurretController.SERVO_AT_ZERO);
@@ -147,12 +128,10 @@ public class ShooterCalibration extends LinearOpMode {
         telemetry.addLine(nectarHood == null
                 ? "WARNING: missing servo: " + NECTAR_HOOD
                 : "Nectar hood found: " + NECTAR_HOOD);
-        // Only a warning: the rig is still usable hand-fed without
         telemetry.addLine(conveyorMotor == null || pollenBed == null || nectarBed == null
                 ? "WARNING: no conveyor/beds -- A will not feed, hand-feed instead"
                 : "Feed ready: " + CONVEYOR_MOTOR);
 
-        // Use encoder-based RUN_USING_ENCODER velocity control on both motors.
         configureShooterMotor(pollenMotor);
         configureShooterMotor(nectarMotor);
         telemetry.update();
@@ -188,10 +167,6 @@ public class ShooterCalibration extends LinearOpMode {
                 } else if (!Double.isFinite(measuredRpm) || measuredRpm < 0.0) {
                     fitResult = "Cannot record: encoder RPM is invalid";
                 } else {
-                    // Store FLIGHT distance. The fit compares against a
-                    // trajectory that starts at the ball's exit point, so
-                    // the bumper offset is applied once, here, rather than
-                    // being carried through the model.
                     double flightIn = toFlightIn(measuredIn, nectar, hoodDeg);
                     samples.add(new Sample(nectar, hoodDeg, measuredRpm, flightIn));
                     fitResult = String.format(Locale.US,
@@ -215,14 +190,10 @@ public class ShooterCalibration extends LinearOpMode {
 
     // ---- UI ---------------------------------------------------------------
 
-    // Hold either trigger for the coarse step. Without it a 90 in shot takes
-    // 90 presses to enter.
     private void adjust(int dir, boolean coarse) {
         switch (field) {
             case 0:
                 nectar = !nectar;
-                // Jump to that ball's working point rather than carrying the
-                // other ball's numbers across.
                 targetRpm = nectar ? 3123.0 : 3813.0;
                 hoodDeg   = nectar ? 75.0   : 70.0;
                 break;
@@ -278,12 +249,10 @@ public class ShooterCalibration extends LinearOpMode {
     private DcMotorEx activeMotor() { return nectar ? nectarMotor : pollenMotor; }
     private Servo activeHood()      { return nectar ? nectarHood  : pollenHood;  }
 
-    // Mirrors RobotHardware.configureShooter().
     private void configureShooterMotor(DcMotorEx motor) {
         if (motor == null) return;
-        motor.setDirection(DcMotorSimple.Direction.FORWARD);   // both, measured 13 Nov
+        motor.setDirection(DcMotorSimple.Direction.FORWARD);
         motor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        // Coast like the robot does.
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         motor.setVelocityPIDFCoefficients(
                 VELOCITY_PIDF_P, VELOCITY_PIDF_I,
@@ -299,7 +268,6 @@ public class ShooterCalibration extends LinearOpMode {
     private void applyFlywheel() {
         DcMotorEx m = activeMotor();
         if (m == null) return;
-        // DcMotorEx velocity is in encoder ticks/second.
         m.setVelocity(spinning ? targetRpm * TICKS_PER_REV / 60.0 : 0.0);
     }
 
@@ -307,7 +275,6 @@ public class ShooterCalibration extends LinearOpMode {
         spinning = false;
         if (pollenMotor != null) pollenMotor.setVelocity(0);
         if (nectarMotor != null) nectarMotor.setVelocity(0);
-        // The belt too.
         stopFeed();
     }
 
@@ -317,8 +284,6 @@ public class ShooterCalibration extends LinearOpMode {
         s.setPosition(nectar ? HoodMap.nectarPos(hoodDeg) : HoodMap.pollenPos(hoodDeg));
     }
 
-    // Hold A: the belt runs until you let go. A counted stroke does not carry
-    // the ball from the tunnel to the flywheel.
     private void beginFire() {
         if (conveyorMotor == null || pollenBed == null || nectarBed == null) {
             fitResult = "no conveyor/beds in config -- hand-feed the ball";
@@ -329,7 +294,6 @@ public class ShooterCalibration extends LinearOpMode {
             return;
         }
 
-        // Only the selected tunnel opens.
         pollenBed.setPosition(MechController.bedPollenPos(!nectar));
         nectarBed.setPosition(MechController.bedNectarPos(nectar));
         sleep(FEED_SETTLE_MS);
@@ -357,7 +321,6 @@ public class ShooterCalibration extends LinearOpMode {
         conveyorMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
     }
 
-    // Both beds back up, which is where MechController leaves them after
     private void restBeds() {
         if (pollenBed != null) pollenBed.setPosition(MechController.bedPollenPos(true));
         if (nectarBed != null) nectarBed.setPosition(MechController.bedNectarPos(true));
@@ -379,7 +342,7 @@ public class ShooterCalibration extends LinearOpMode {
             px = x; pz = z;
             x += vx * DT; z += vz * DT;
             if (z <= 0.0) {
-                double f = (pz == z) ? 0.0 : pz / (pz - z);   // interpolate the crossing
+                double f = (pz == z) ? 0.0 : pz / (pz - z);
                 return (px + f * (x - px)) * IN_PER_M;
             }
         }
