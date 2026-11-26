@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.robot;
 
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.hardware.rev.RevColorSensorV3;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -132,6 +133,14 @@ public class RobotHardware {
 
         camera = hwMap.get(WebcamName.class, "Webcam 1");                        // USB 2
         limeLight = hwMap.get(Limelight3A.class, "limeLight");                   // USB 3
+
+        // Without this every getVelocity, every encoder and every colour
+        // sensor read is its own round trip to the hub, a few ms each. The
+        // loop was long enough that a flywheel dip or a ball passing the
+        // intake sensor could fall between two samples entirely.
+        for (LynxModule hub : hwMap.getAll(LynxModule.class)) {
+            hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
+        }
 
         configureMotors();
         configureServos();

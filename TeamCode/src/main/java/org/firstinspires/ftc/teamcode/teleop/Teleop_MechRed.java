@@ -62,22 +62,17 @@ public class Teleop_MechRed extends OpMode {
         mech.initPositions(MatchState.isFresh(Red.ALLIANCE) && MatchState.deployed);
         mech.armDeploy();
 
-        turret.beginHoming();
+        turret.assumeHomed();
 
         follower = Constants.create(hardwareMap);
 
-        telemetry.addLine("RED alliance. Homing turret...");
+        telemetry.addLine("RED alliance. Turret at stored zero.");
         telemetry.update();
     }
-
-    private boolean initRb = false;
 
     @Override public void init_loop() {
         turret.update();
         telemetry.addData("Turret", turret.getHomeMessage());
-        telemetry.addData("Press", "gamepad2 RB to search if it did not find home");
-        if (gamepad2.right_bumper && !initRb) turret.beginSearch();
-        initRb = gamepad2.right_bumper;
         telemetry.update();
     }
 
@@ -159,7 +154,7 @@ public class Teleop_MechRed extends OpMode {
 
         boolean bk2 = gamepad2.back && !p2bk, st2 = gamepad2.start && !p2st;
         if (bk2) { mech.countPollen = 0; mech.countNectar = 0; }
-        if (st2) turret.beginSearch();
+        if (st2) turret.assumeHomed();
         p2bk = gamepad2.back; p2st = gamepad2.start;
 
         double trim = gamepad2.right_stick_x;

@@ -469,15 +469,15 @@ public class RobotSetup extends LinearOpMode {
                         v -> MechController.REVERSE_INTAKE_TIME_MS = (long) v),
             };
             case FEED: return new Knob[] {
-                new Knob("MechController", "TICKS_TO_SHOOT_POLLEN", "%.0f", 25, 5, 0, 2000,
-                        () -> MechController.TICKS_TO_SHOOT_POLLEN,
-                        v -> MechController.TICKS_TO_SHOOT_POLLEN = (int) v),
-                new Knob("MechController", "TICKS_TO_SHOOT_NECTAR", "%.0f", 25, 5, 0, 2000,
-                        () -> MechController.TICKS_TO_SHOOT_NECTAR,
-                        v -> MechController.TICKS_TO_SHOOT_NECTAR = (int) v),
-                new Knob("MechController", "TICKS_TO_SHOOT_BOTH", "%.0f", 25, 5, 0, 2000,
-                        () -> MechController.TICKS_TO_SHOOT_BOTH,
-                        v -> MechController.TICKS_TO_SHOOT_BOTH = (int) v),
+                new Knob("MechController", "TICKS_INDEX_POLLEN", "%.0f", 25, 5, 0, 2000,
+                        () -> MechController.TICKS_INDEX_POLLEN,
+                        v -> MechController.TICKS_INDEX_POLLEN = (int) v),
+                new Knob("MechController", "TICKS_INDEX_NECTAR", "%.0f", 25, 5, 0, 2000,
+                        () -> MechController.TICKS_INDEX_NECTAR,
+                        v -> MechController.TICKS_INDEX_NECTAR = (int) v),
+                new Knob("MechController", "TICKS_INDEX_BOTH", "%.0f", 25, 5, 0, 2000,
+                        () -> MechController.TICKS_INDEX_BOTH,
+                        v -> MechController.TICKS_INDEX_BOTH = (int) v),
                 new Knob("MechController", "CONVEYOR_POWER", "%.2f", 0.05, 0.01, 0.05, 1.0,
                         () -> MechController.CONVEYOR_POWER,
                         v -> MechController.CONVEYOR_POWER = v),
@@ -2038,6 +2038,19 @@ public class RobotSetup extends LinearOpMode {
                 } else if (dipMeasured != null) {
                     telemetry.addData("ball measured", "%.0f ticks/s  (%.1f%% of target)",
                             dipMeasured, 100.0 * dipMeasured / Math.max(1, target));
+                    // Put the trip halfway between the noise and the ball, so
+                    // both have the same margin, and read it back as the two
+                    // constants the detector actually uses.
+                    if (dipMeasured > spread) {
+                        double wantTrip = 0.5 * (spread + dipMeasured);
+                        double enter = 1.0 - wantTrip / Math.max(1, target);
+                        double exit  = 1.0 - 0.5 * wantTrip / Math.max(1, target);
+                        telemetry.addData("SET", "DIP_ENTER %.4f   DIP_EXIT %.4f", enter, exit);
+                        telemetry.addData("margin", "noise %.0f  trip %.0f  ball %.0f ticks/s",
+                                spread, wantTrip, dipMeasured);
+                    } else {
+                        telemetry.addLine("!! ball is not bigger than the noise -- dip cannot work");
+                    }
                     if (dipRecoverMs != null) {
                         telemetry.addData("recovered in", "%d ms   vs SHOOTER_RECOVER_MS %d",
                                 dipRecoverMs, MechController.SHOOTER_RECOVER_MS);
@@ -2424,10 +2437,10 @@ public class RobotSetup extends LinearOpMode {
 
     private void startFeed() {
         switch (sel % 4) {
-            case 1:  runBelt(MechController.TICKS_TO_SHOOT_NECTAR); break;
-            case 2:  runBelt(MechController.TICKS_TO_SHOOT_BOTH);   break;
+            case 1:  runBelt(MechController.TICKS_INDEX_NECTAR); break;
+            case 2:  runBelt(MechController.TICKS_INDEX_BOTH);   break;
             case 3:  note = "that row is belt POWER -- select a distance"; break;
-            default: runBelt(MechController.TICKS_TO_SHOOT_POLLEN); break;
+            default: runBelt(MechController.TICKS_INDEX_POLLEN); break;
         }
     }
 

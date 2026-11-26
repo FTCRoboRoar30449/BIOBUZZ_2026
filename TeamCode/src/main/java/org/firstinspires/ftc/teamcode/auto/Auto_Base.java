@@ -184,7 +184,7 @@ public abstract class Auto_Base extends OpMode {
         mech.initPositions();
         mech.countPollen = preloadPollen();
         mech.countNectar = preloadNectar();
-        turret.beginHoming();
+        turret.assumeHomed();
 
         follower = Constants.create(hardwareMap);
         if (follower != null) follower.setPose(startPose());

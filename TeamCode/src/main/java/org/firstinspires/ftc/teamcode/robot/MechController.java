@@ -3,6 +3,8 @@ package org.firstinspires.ftc.teamcode.robot;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 
+import java.util.Locale;
+
 public class MechController {
     public enum OperationStatus {
         NOT_STARTED, RUNNING, COMPLETED, ROBOT_FULL, FLOWER_EMPTY,
@@ -36,9 +38,20 @@ public class MechController {
     // ---- conveyor / storage ----------------------------------------------
     public static int TICKS_PER_POLLEN_STORAGE = 200;
     public static int TICKS_PER_NECTAR_STORAGE = 250;
-    public static int TICKS_TO_SHOOT_POLLEN = 1200;
-    public static int TICKS_TO_SHOOT_NECTAR = 1500;
-    public static int TICKS_TO_SHOOT_BOTH = 1500;
+    // One indexed stroke: the measured travel for a single ball.
+    public static int TICKS_INDEX_POLLEN = 400;
+    public static int TICKS_INDEX_NECTAR = 500;
+    public static int TICKS_INDEX_BOTH = 500;
+    // Continuous fire, doubled: the belt must keep running past the point a
+    // single stroke would stop, or the last ball is still in the tunnel when
+    // the count empties.
+    // Deliberately far past any real ball: with COUNT_FLOW_BY_DIP true the
+    // flywheel decides when a ball has gone, and the belt must not stop the
+    // volley before it. Only reachable if the dip detector is switched off,
+    // where it becomes an effectively infinite belt run.
+    public static int TICKS_TO_SHOOT_POLLEN = 10000;
+    public static int TICKS_TO_SHOOT_NECTAR = 10000;
+    public static int TICKS_TO_SHOOT_BOTH = 10000;
 
     public static boolean FEED_BY_TICKS = false;
     public static long FEED_RUN_MS = 900;
@@ -85,7 +98,7 @@ public class MechController {
     public static double SHOOTER_READY_TOLERANCE = 0.95;
     public static boolean REQUIRE_HOMED = true;
     public static boolean HIVE_CONTINUOUS = true;
-    public static double FLOWER_REST = 0.540, FLOWER_SCOOP = 0.445;
+    public static double FLOWER_REST = 0.530, FLOWER_SCOOP = 0.430;
 
     public static double FLOWER_PREDEPLOY = 0.820;
 
@@ -181,6 +194,12 @@ public class MechController {
         }
         lastLoopMs = nowMs;
 
+        // One read per flywheel per loop. The dip detector and the at-speed
+        // gate then judge the SAME sample, and the second read of a register
+        // does not force the hub to refill its bulk cache.
+        vPollenTps = robot.pollenShootingMot.getVelocity();
+        vNectarTps = robot.nectarShootingMot.getVelocity();
+
         turret.update();
 
         vision.updateRaisedTarget();
@@ -270,6 +289,7 @@ public class MechController {
         pollenExits = 0; nectarExits = 0;
         pollenExitsAtArm = 0; nectarExitsAtArm = 0;
         pollenDipLow = true; nectarDipLow = true;
+        resetIntakeDebounce();
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
             operationStatus = OperationStatus.CANCELLED;
@@ -353,9 +373,10 @@ public class MechController {
                     reversingWrongBall = true; reverseStartMs = now; robot.intakeMot.setPower(-INTAKE_POWER);
                 } else {
                     robot.intakeMot.setPower(INTAKE_POWER);
-                    if (color != 0 && previousFieldColor == 0 && now - lastCountMs >= COUNT_COOLDOWN_MS) {
-                        if (color == 1) countPollen++;
-                        else if (color == allianceTeamNectar()) countNectar++;
+                    int settled = debounceIntake(color);
+                    if (settled != 0) {
+                        if (settled == 1) countPollen++;
+                        else if (settled == allianceTeamNectar()) countNectar++;
                         lastCountMs = now;
                     }
                 }
@@ -430,10 +451,10 @@ public class MechController {
                     rejectingFlowerNectar = true; robot.intakeMot.setPower(-INTAKE_POWER);
                 } else {
                     robot.intakeMot.setPower(INTAKE_POWER);
-                    if (color != 0 && previousFlowerColor == 0
-                            && now - lastCountMs >= COUNT_COOLDOWN_MS) {
-                        if (color == 1) countPollen++;
-                        else if (color == allianceTeamNectar()) countNectar++;
+                    int settled = debounceIntake(color);
+                    if (settled != 0) {
+                        if (settled == 1) countPollen++;
+                        else if (settled == allianceTeamNectar()) countNectar++;
                         lastCountMs = now;
                     }
                 }
@@ -617,23 +638,34 @@ public class MechController {
     private boolean preSpinning = false;
 
     // ---- ball-exit detection by flywheel RPM dip ---------------------------
-    public static double DIP_ENTER = 0.960;
-    public static double DIP_EXIT  = 0.965;
+    // Measured 24 Nov at 2900 rpm, target 1350 ticks/s, three runs each ball.
+    // Noise never fell more than 70 below target; the shallowest ball cost
+    // 180 (pollen) and the deepest 260 (nectar). The trip sits at 125, midway,
+    // so noise is 1.79x under it and the weakest ball 1.44x over it. EXIT is
+    // 60, which the wheel clears between balls while it idles 1280..1380.
+    // At the old 0.960 the trip was 54 and noise alone reached 70: phantom
+    // balls, which is why the count emptied early.
+    public static double DIP_ENTER = 0.9074;
+    public static double DIP_EXIT  = 0.9556;
 
     private boolean pollenDipLow = true, nectarDipLow = true;
     private int pollenExits = 0, nectarExits = 0;
     private int pollenExitsAtArm = 0, nectarExitsAtArm = 0;
 
+    private double vPollenTps = 0, vNectarTps = 0;
+    public double getPollenTps() { return vPollenTps; }
+    public double getNectarTps() { return vNectarTps; }
+
     private void serviceExitDetect() {
         if (targetPollenTps > 0) {
-            double r = robot.pollenShootingMot.getVelocity() / targetPollenTps;
+            double r = vPollenTps / targetPollenTps;
             if (!pollenDipLow && r < DIP_ENTER) { pollenDipLow = true; pollenExits++; }
             else if (pollenDipLow && r > DIP_EXIT) pollenDipLow = false;
         } else {
             pollenDipLow = true;
         }
         if (targetNectarTps > 0) {
-            double r = robot.nectarShootingMot.getVelocity() / targetNectarTps;
+            double r = vNectarTps / targetNectarTps;
             if (!nectarDipLow && r < DIP_ENTER) { nectarDipLow = true; nectarExits++; }
             else if (nectarDipLow && r > DIP_EXIT) nectarDipLow = false;
         } else {
@@ -982,12 +1014,12 @@ public class MechController {
 
     private boolean shooterAtSpeed(BallToShoot ball) {
         if (ball == BallToShoot.POLLEN) {
-            return targetPollenTps > 0 && robot.pollenShootingMot.getVelocity()
-                    >= targetPollenTps * SHOOTER_READY_TOLERANCE;
+            return targetPollenTps > 0
+                    && vPollenTps >= targetPollenTps * SHOOTER_READY_TOLERANCE;
         }
         if (ball == BallToShoot.NECTAR) {
-            return targetNectarTps > 0 && robot.nectarShootingMot.getVelocity()
-                    >= targetNectarTps * SHOOTER_READY_TOLERANCE;
+            return targetNectarTps > 0
+                    && vNectarTps >= targetNectarTps * SHOOTER_READY_TOLERANCE;
         }
         if (ball == BallToShoot.BOTH) {
             return shooterAtSpeed(BallToShoot.POLLEN) && shooterAtSpeed(BallToShoot.NECTAR);
@@ -1098,11 +1130,11 @@ public class MechController {
         setBedsUp();
         int ticks;
         if (ball == BallToShoot.BOTH) {
-            conveyorPollen(1); conveyorNectar(1); ticks = TICKS_TO_SHOOT_BOTH;
+            conveyorPollen(1); conveyorNectar(1); ticks = TICKS_INDEX_BOTH;
         } else if (ball == BallToShoot.POLLEN) {
-            conveyorPollen(1); conveyorNectar(0); ticks = TICKS_TO_SHOOT_POLLEN;
+            conveyorPollen(1); conveyorNectar(0); ticks = TICKS_INDEX_POLLEN;
         } else {
-            conveyorNectar(1); conveyorPollen(0); ticks = TICKS_TO_SHOOT_NECTAR;
+            conveyorNectar(1); conveyorPollen(0); ticks = TICKS_INDEX_NECTAR;
         }
         if (!FEED_BY_TICKS) {
             feedTargetPosition = 0;
@@ -1186,6 +1218,43 @@ public class MechController {
     private int intakeColor() {
         if (!USE_INTAKE_COLOR) return 0;
         return vision.ballColor(robot.sensorIntakeR, robot.sensorIntakeL);
+    }
+
+    // A ball is counted once it has been SEEN for COUNT_SEEN_FRAMES in a row,
+    // and the next one cannot be counted until the sensor has been CLEAR for
+    // COUNT_CLEAR_FRAMES in a row. A single-frame edge plus a time cooldown
+    // could not tell a flicker from two balls: one dropout inside the cooldown
+    // lost a ball, one outside it counted the same ball twice.
+    // Returns the colour to count, or 0.
+    // Asymmetric on purpose. At 1150 rpm the ball is in front of the sensor
+    // for roughly one or two loops, so SEEN must stay at 1 or balls are
+    // missed; the guard against counting one ball twice is the CLEAR side,
+    // which is in MILLISECONDS so it does not change with loop rate.
+    public static int COUNT_SEEN_FRAMES = 1;
+    public static long COUNT_CLEAR_MS = 150;
+    private int seenRun = 0, seenColor = 0;
+    private long clearSinceMs = 0;
+    private boolean countArmed = true;
+
+    private int debounceIntake(int color) {
+        long now = System.currentTimeMillis();
+        if (color == 0) {
+            seenRun = 0; seenColor = 0;
+            if (clearSinceMs == 0) clearSinceMs = now;
+            else if (now - clearSinceMs >= COUNT_CLEAR_MS) countArmed = true;
+            return 0;
+        }
+        clearSinceMs = 0;
+        if (color != seenColor) { seenColor = color; seenRun = 1; } else seenRun++;
+        if (countArmed && seenRun >= COUNT_SEEN_FRAMES) {
+            countArmed = false;
+            return color;
+        }
+        return 0;
+    }
+
+    private void resetIntakeDebounce() {
+        seenRun = 0; seenColor = 0; clearSinceMs = 0; countArmed = true;
     }
     public static final int NECTAR_TUNNEL_CAPACITY = 3;
     public static final int POLLEN_TUNNEL_CAPACITY = 4;
@@ -1333,6 +1402,11 @@ public class MechController {
                         ? " busy " + robot.conveyorMot.isBusy()
                         : (totalBalls() >= 4 ? " BLOCKED:full"
                            : flowing ? " BLOCKED:flowing" : ""));
+        double tEnc = turret.getMeasuredDeg();
+        telemetry.addData("TURRET", "cmd %+.1f   enc %s   %s",
+                turret.getCommandedDeg(),
+                Double.isNaN(tEnc) ? "-" : String.format(Locale.US, "%+.1f", tEnc),
+                turret.isSettled() ? "settled" : "moving");
         telemetry.addData("LOOP  ", "%.1fms  %.0fHz   worst %.0f",
                 loopMsAvg, loopMsAvg > 0 ? 1000.0 / loopMsAvg : 0, loopMsWorst);
 
