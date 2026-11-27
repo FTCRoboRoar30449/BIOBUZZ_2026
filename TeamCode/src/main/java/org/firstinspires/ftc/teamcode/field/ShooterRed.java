@@ -54,10 +54,8 @@ public final class ShooterRed {
     // ---- Limelight 3A, turret-mounted ------------------------------------
 
     // ---- tables, one entry per inch of range from 15 in -------------------
-    // Checked against the four shots in Step3_Shooter Calibration.csv, at the
-    // Solved, not fitted: tan(hood)=2H/X+tan30, v^2=gX/(cos(sin+cos tan30)),
-    // H = GOAL_Z minus the CAD exit height, 30 deg entry. Speeds carry x1.00982
-    // for drag. 30 rpm rms against the four Step3 stands.
+    // Solved for a 30 deg entry, CAD exit height, speeds x1.00982 for drag.
+    // 30 rpm rms against the four Step3 stands.
     private static final double[] POLLEN_HOOD = {
             81, 80, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75,
             74, 74, 73, 73, 73, 72, 72, 71, 71, 71, 70, 70, 69,
@@ -67,9 +65,7 @@ public final class ShooterRed {
             4.791, 4.805, 4.819, 4.833, 4.848, 4.863, 4.878, 4.893, 4.909,
             4.925, 4.941, 4.958, 4.974, 4.991, 5.008, 5.025, 5.042, 5.059,
             5.077, 5.094, 5.112, 5.130, 5.148 };
-    // Validity flag, NOT a measured make rate. 95 = hood is inside 55-80,
-    // 50 = it is not, which fails MIN_CONFIDENCE_PCT. Measured rates were
-    // 88/44/33 pollen and 67/50 nectar, through the old table.
+    // Validity flag, not a measured rate: 95 = hood inside 55-80, 50 = not.
     private static final double[] POLLEN_MAKE = {
             50.0, 50.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,
             95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0, 95.0,

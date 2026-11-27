@@ -38,20 +38,13 @@ public class MechController {
     // ---- conveyor / storage ----------------------------------------------
     public static int TICKS_PER_POLLEN_STORAGE = 200;
     public static int TICKS_PER_NECTAR_STORAGE = 250;
-    // One indexed stroke: the measured travel for a single ball.
     public static int TICKS_INDEX_POLLEN = 400;
     public static int TICKS_INDEX_NECTAR = 500;
     public static int TICKS_INDEX_BOTH = 500;
-    // Continuous fire, doubled: the belt must keep running past the point a
-    // single stroke would stop, or the last ball is still in the tunnel when
-    // the count empties.
-    // Deliberately far past any real ball: with COUNT_FLOW_BY_DIP true the
-    // flywheel decides when a ball has gone, and the belt must not stop the
-    // volley before it. Only reachable if the dip detector is switched off,
-    // where it becomes an effectively infinite belt run.
-    public static int TICKS_TO_SHOOT_POLLEN = 10000;
-    public static int TICKS_TO_SHOOT_NECTAR = 10000;
-    public static int TICKS_TO_SHOOT_BOTH = 10000;
+    // Unused while COUNT_FLOW_BY_DIP is true.
+    public static int TICKS_TO_SHOOT_POLLEN = 800;
+    public static int TICKS_TO_SHOOT_NECTAR = 1000;
+    public static int TICKS_TO_SHOOT_BOTH = 1000;
 
     public static boolean FEED_BY_TICKS = false;
     public static long FEED_RUN_MS = 900;
@@ -194,11 +187,16 @@ public class MechController {
         }
         lastLoopMs = nowMs;
 
-        // One read per flywheel per loop. The dip detector and the at-speed
-        // gate then judge the SAME sample, and the second read of a register
-        // does not force the hub to refill its bulk cache.
+        // One read each, so the dip detector and the at-speed gate agree.
+        // Position is timestamped HERE, with nowMs, not later in the loop:
+        // the gap between the bulk snapshot and the clock is what put loop
+        // jitter straight into the rate.
         vPollenTps = robot.pollenShootingMot.getVelocity();
         vNectarTps = robot.nectarShootingMot.getVelocity();
+        rawPosP = robot.pollenShootingMot.getCurrentPosition();
+        rawPosN = robot.nectarShootingMot.getCurrentPosition();
+        rawPosMs = nowMs;
+        rawConvPos = robot.conveyorMot.getCurrentPosition();
 
         turret.update();
 
@@ -289,6 +287,9 @@ public class MechController {
         pollenExits = 0; nectarExits = 0;
         pollenExitsAtArm = 0; nectarExitsAtArm = 0;
         pollenDipLow = true; nectarDipLow = true;
+        rateP = 0; rateN = 0; histNP = 0; histNN = 0;
+        pollenDepth = 0; nectarDepth = 0;
+        lastDipMs = 0;
         resetIntakeDebounce();
         if (newState == MechState.IDLE) {
             stopIntake(); stopShooterMotors(); stopFeedConveyor();
@@ -603,7 +604,7 @@ public class MechController {
         ShooterAdapter.FirePlan plan = shooter.planHere(tgt, poseX, poseY, poseHeadingDeg);
         if (!plan.valid) { releaseWheels(); return; }
 
-        // Aim and spin, but do NOT advance shotPhase -- nothing is armed
+        // Aim and spin only; shotPhase does not advance.
         preSpinHoldUntilMs = 0;
         preSpinning = true;
         ShooterAdapter.Shot s = countNectar > 0 ? plan.nectar : plan.pollen;
@@ -638,15 +639,6 @@ public class MechController {
     private boolean preSpinning = false;
 
     // ---- ball-exit detection by flywheel RPM dip ---------------------------
-    // Measured 24 Nov at 2900 rpm, target 1350 ticks/s, three runs each ball.
-    // Noise never fell more than 70 below target; the shallowest ball cost
-    // 180 (pollen) and the deepest 260 (nectar). The trip sits at 125, midway,
-    // so noise is 1.79x under it and the weakest ball 1.44x over it. EXIT is
-    // 60, which the wheel clears between balls while it idles 1280..1380.
-    // At the old 0.960 the trip was 54 and noise alone reached 70: phantom
-    // balls, which is why the count emptied early.
-    public static double DIP_ENTER = 0.9074;
-    public static double DIP_EXIT  = 0.9556;
 
     private boolean pollenDipLow = true, nectarDipLow = true;
     private int pollenExits = 0, nectarExits = 0;
@@ -656,21 +648,119 @@ public class MechController {
     public double getPollenTps() { return vPollenTps; }
     public double getNectarTps() { return vNectarTps; }
 
+    // Counts TICKS THE WHEEL DID NOT TURN, from encoder position, not from a
+    // velocity sample. Position integrates, so a dip cannot fall between two
+    // loops however slow the loop is -- which is why the velocity version
+    // measured in RobotSetup and saw nothing in teleop.
+    // A ball is a STEP down in speed; noise and rpm changes are slopes. The
+    // test is the drop from one sample to the next, in ticks/s, from encoder
+    // position so it is not quantised like getVelocity.
+    // Pollen's wheel is the noisier of the two: idle spread measured 20-80
+    // against nectar's flat 40, with a smaller ball dip of 180-200. 150
+    // leaves only 30-50 of margin, so watch DEPTH for missed balls.
+    public static double DIP_DROP_POLLEN = 150;
+    public static double DIP_DROP_NECTAR = 120;
+    public static long DIP_REFRACTORY_MS = 250;
+    // The conveyor starting pulls the bus down and both wheels sag with it.
+    public static long DIP_START_IGNORE_MS = 250;
+    // One ball needs about 400 ticks of belt. Below this it is not a ball.
+    public static int DIP_MIN_TRAVEL_TICKS = 250;
+    public static double DIP_MAX_DT_S = 0.25;
+
+    private int posP = 0, posN = 0;
+    private double rateP = 0, rateN = 0;
+    private final double[] histP = new double[3], histN = new double[3];
+    private int histNP = 0, histNN = 0;
+    private long lastDipMs = 0;
+    private int rawPosP = 0, rawPosN = 0;
+    private long rawPosMs = 0;
+    private int rawConvPos = 0;
+
     private void serviceExitDetect() {
-        if (targetPollenTps > 0) {
-            double r = vPollenTps / targetPollenTps;
-            if (!pollenDipLow && r < DIP_ENTER) { pollenDipLow = true; pollenExits++; }
-            else if (pollenDipLow && r > DIP_EXIT) pollenDipLow = false;
-        } else {
-            pollenDipLow = true;
+        double dt = (rawPosMs - lastDipMs) / 1000.0;
+        lastDipMs = rawPosMs;
+        int pp = rawPosP, pn = rawPosN;
+
+        // Latched for the whole volley, NOT the instantaneous flowing: a ball
+        // pulls the wheel under SHOOTER_READY_TOLERANCE, which drops flowing
+        // on the very loop the dip happens.
+        boolean live = flowAnchorValid && dt > 0 && dt <= DIP_MAX_DT_S;
+        if (!live) {
+            posP = pp; posN = pn;
+            pollenDepth = 0; nectarDepth = 0;
+            rateP = 0; rateN = 0; histNP = 0; histNN = 0;
+            return;
         }
-        if (targetNectarTps > 0) {
-            double r = vNectarTps / targetNectarTps;
-            if (!nectarDipLow && r < DIP_ENTER) { nectarDipLow = true; nectarExits++; }
-            else if (nectarDipLow && r > DIP_EXIT) nectarDipLow = false;
-        } else {
-            nectarDipLow = true;
+        pollenDipLow = detectDip(true,  pp, dt, dipArmP ? targetPollenTps : 0);
+        nectarDipLow = detectDip(false, pn, dt, dipArmN ? targetNectarTps : 0);
+    }
+
+    private boolean detectDip(boolean pollen, int pos, double dt, double target) {
+        int last = pollen ? posP : posN;
+        double moved = Math.abs(pos - last);
+        if (pollen) posP = pos; else posN = pos;
+
+        if (target <= 0) {
+            if (pollen) { rateP = 0; histNP = 0; pollenDepth = 0; }
+            else        { rateN = 0; histNN = 0; nectarDepth = 0; }
+            return true;
         }
+        double actual = moved / dt;
+        double[] h = pollen ? histP : histN;
+        int n = pollen ? histNP : histNN;
+        if (n < 3) {
+            h[n] = actual;
+            if (pollen) histNP = n + 1; else histNN = n + 1;
+            return false;
+        }
+        // Reference is the MEDIAN of the last three, not the single previous
+        // sample: one bad sample in the reference used to manufacture a drop.
+        double a = h[0], b = h[1], c = h[2];
+        double prev = Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
+        double drop = prev - actual;
+        h[0] = b; h[1] = c; h[2] = actual;
+
+        long now = System.currentTimeMillis();
+        long since = now - (pollen ? lastCountP : lastCountN);
+        boolean fired = false;
+        // Belt travel can VETO a count, never create one: balls cannot arrive
+        // closer together than the belt can deliver them, so a burst of
+        // noise inside one ball's worth of travel is not four balls.
+        int travel = Math.abs(rawConvPos - (pollen ? lastCountTicksP : lastCountTicksN));
+        if (drop > (pollen ? DIP_DROP_POLLEN : DIP_DROP_NECTAR)
+                && since > DIP_REFRACTORY_MS
+                && now - flowStartMs > DIP_START_IGNORE_MS
+                && travel >= DIP_MIN_TRAVEL_TICKS) {
+            fired = true;
+            if (pollen) { pollenExits++; pollenExitsTotal++; lastCountP = now;
+                          lastCountTicksP = rawConvPos; }
+            else        { nectarExits++; nectarExitsTotal++; lastCountN = now;
+                          lastCountTicksN = rawConvPos; }
+        }
+        if (pollen) {
+            pollenDepth = drop;
+            if (fired) { if (drop > pollenFireMax) pollenFireMax = drop; }
+            else       { if (drop > pollenDepthMax) pollenDepthMax = drop; }
+        } else {
+            nectarDepth = drop;
+            if (fired) { if (drop > nectarFireMax) nectarFireMax = drop; }
+            else       { if (drop > nectarDepthMax) nectarDepthMax = drop; }
+        }
+        return fired;
+    }
+
+    private long lastCountP = 0, lastCountN = 0;
+    private int lastCountTicksP = 0, lastCountTicksN = 0;
+
+    // Survives the state change, so the evidence is still there afterwards.
+    private double pollenDepth = 0, nectarDepth = 0;
+    private double pollenDepthMax = 0, nectarDepthMax = 0;
+    private double pollenFireMax = 0, nectarFireMax = 0;
+    private int pollenExitsTotal = 0, nectarExitsTotal = 0;
+    public void resetDipEvidence() {
+        pollenDepthMax = 0; nectarDepthMax = 0;
+        pollenFireMax = 0; nectarFireMax = 0;
+        pollenExitsTotal = 0; nectarExitsTotal = 0;
     }
 
     public int getPollenExits() { return pollenExits; }
@@ -765,6 +855,12 @@ public class MechController {
         }
         operationStatus = OperationStatus.RUNNING;
 
+        // Watch only the barrel whose bed is open. The other wheel keeps its
+        // last commanded speed, so target > 0 was arming a detector on a
+        // barrel that was not feeding anything.
+        dipArmP = !nectarOnly;
+        dipArmN = streamNectar || nectarOnly;
+
         conveyorPollen(nectarOnly ? 0 : 1);
         conveyorNectar((streamNectar || nectarOnly) ? 1 : 0);
 
@@ -780,16 +876,20 @@ public class MechController {
             if (!flowAnchorValid) {
                 flowAnchorTicks = robot.conveyorMot.getCurrentPosition();
                 flowAnchorValid = true;
+                flowStartMs = System.currentTimeMillis();
+                lastCountTicksP = rawConvPos; lastCountTicksN = rawConvPos;
+
             }
             flowing = true;
             robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             robot.conveyorMot.setPower(CONVEYOR_POWER);
         } else {
-            boolean wasFlowing = flowing;
             flowing = false;
             robot.conveyorMot.setPower(0);
-            if (!wasFlowing) syncExitBaseline();
-            return;
+            // Mid-volley the wheel drops under tolerance on every ball, so
+            // this branch runs while the ball is going through. Syncing here
+            // threw that exit away before it could be counted.
+            if (!flowAnchorValid) { syncExitBaseline(); return; }
         }
 
         countFlowByBeltTravel(hive);
@@ -800,6 +900,9 @@ public class MechController {
 
     private int flowAnchorTicks = 0;
     private boolean flowAnchorValid = false;
+
+    private long flowStartMs = 0;
+    private boolean dipArmP = false, dipArmN = false;
 
     private void countFlowByBeltTravel(boolean hive) {
         if (COUNT_FLOW_BY_DIP) { countFlowByDip(hive); return; }
@@ -831,10 +934,12 @@ public class MechController {
         int goneP = pollenExits - pollenExitsAtArm;
         if (goneP > 0) {
             pollenExitsAtArm = pollenExits;
-            for (int i = 0; i < goneP && !nectarOnly && countPollen > 0; i++) {
-                countPollen--;
-                shotsCompleted++;
-                if (hive) cellPollenIn++;
+            if (!nectarOnly) {
+                for (int i = 0; i < goneP && countPollen > 0; i++) {
+                    countPollen--;
+                    shotsCompleted++;
+                    if (hive) cellPollenIn++;
+                }
             }
         }
         int goneN = nectarExits - nectarExitsAtArm;
@@ -855,6 +960,7 @@ public class MechController {
 
     private void haltFlow() {
         nectarOnly = false;
+        dipArmP = false; dipArmN = false;
         syncExitBaseline();
         flowAnchorValid = false;
         if (!flowing) return;
@@ -1211,7 +1317,7 @@ public class MechController {
 
     private void setBedsUp() { conveyorNectar(1); conveyorPollen(1); }
 
-    // The bumpers do not touch the counts, so automatic counting and manual
+    // The bumpers do not touch the counts.
     public static boolean USE_INTAKE_COLOR = true;
     public static boolean USE_TUNNEL_SENSORS = false;
 
@@ -1220,16 +1326,9 @@ public class MechController {
         return vision.ballColor(robot.sensorIntakeR, robot.sensorIntakeL);
     }
 
-    // A ball is counted once it has been SEEN for COUNT_SEEN_FRAMES in a row,
-    // and the next one cannot be counted until the sensor has been CLEAR for
-    // COUNT_CLEAR_FRAMES in a row. A single-frame edge plus a time cooldown
-    // could not tell a flicker from two balls: one dropout inside the cooldown
-    // lost a ball, one outside it counted the same ball twice.
-    // Returns the colour to count, or 0.
-    // Asymmetric on purpose. At 1150 rpm the ball is in front of the sensor
-    // for roughly one or two loops, so SEEN must stay at 1 or balls are
-    // missed; the guard against counting one ball twice is the CLEAR side,
-    // which is in MILLISECONDS so it does not change with loop rate.
+    // SEEN stays at 1: at 1150 rpm the ball is in front of the sensor for
+    // one or two loops. Double counting is blocked by the CLEAR side, in ms
+    // so it does not move with loop rate.
     public static int COUNT_SEEN_FRAMES = 1;
     public static long COUNT_CLEAR_MS = 150;
     private int seenRun = 0, seenColor = 0;
@@ -1374,10 +1473,13 @@ public class MechController {
         telemetry.addData("STATE ", "%s / %s", currentState, operationStatus);
         telemetry.addData("BALLS ", "P%d N%d = %d/4    shots %d",
                 countPollen, countNectar, totalBalls(), shotsCompleted);
-        telemetry.addData("EXITS ", "wheel saw P%d N%d = %d   belt counted %d   drift %+d   %s",
-                pollenExits, nectarExits, pollenExits + nectarExits,
-                shotsCompleted, (pollenExits + nectarExits) - shotsCompleted,
-                COUNT_FLOW_BY_DIP ? "DIP IS PRIMARY" : "belt is primary");
+        telemetry.addData("EXITS ", "now P%d N%d   total P%d N%d   trip P%.0f N%.0f   %s",
+                pollenExits, nectarExits, pollenExitsTotal, nectarExitsTotal,
+                DIP_DROP_POLLEN, DIP_DROP_NECTAR,
+                COUNT_FLOW_BY_DIP ? "dip" : "belt");
+        telemetry.addData("DEPTH ", "P noise %.0f / fired %.0f of %.0f   N noise %.0f / fired %.0f of %.0f",
+                pollenDepthMax, pollenFireMax, DIP_DROP_POLLEN,
+                nectarDepthMax, nectarFireMax, DIP_DROP_NECTAR);
         telemetry.addData("WHY   ", whyLine());
         ShooterAdapter.Target seen = vision.getRaisedTarget();
         ShooterAdapter.Target guess = seen != null
@@ -1410,6 +1512,10 @@ public class MechController {
         telemetry.addData("LOOP  ", "%.1fms  %.0fHz   worst %.0f",
                 loopMsAvg, loopMsAvg > 0 ? 1000.0 / loopMsAvg : 0, loopMsWorst);
 
+        if (isIntakeState(currentState)) {
+            telemetry.addData("SENSE ", "%s  %s", vision.intakeRaw(),
+                    countArmed ? "armed" : "waiting for clear");
+        }
         if (currentState == MechState.INTAKE_FIELD) {
             BallDetector.Detection d = vision.nearestWantedBall(allianceTeamNectar());
             telemetry.addData("BALL", d == null

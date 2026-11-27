@@ -153,7 +153,8 @@ public class Teleop_MechBlue extends OpMode {
         p2dd = gamepad2.dpad_down; p2dl = gamepad2.dpad_left;
 
         boolean bk2 = gamepad2.back && !p2bk, st2 = gamepad2.start && !p2st;
-        if (bk2) { mech.countPollen = 0; mech.countNectar = 0; }
+        if (bk2) { mech.countPollen = 0; mech.countNectar = 0; mech.resetDipEvidence();
+                   vision.resetIntakeMin(); }
         if (st2) turret.assumeHomed();
         p2bk = gamepad2.back; p2st = gamepad2.start;
 

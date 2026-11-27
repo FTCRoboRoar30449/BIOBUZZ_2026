@@ -54,7 +54,7 @@ public final class ShooterBlue {
     // ---- Limelight 3A, turret-mounted ------------------------------------
 
     // ---- tables, one entry per inch of range from 15 in -------------------
-    // the check against Step3_Shooter Calibration.csv.
+    // Identical to ShooterRed; see there for the derivation.
     private static final double[] POLLEN_HOOD = {
             81, 80, 80, 79, 79, 78, 78, 77, 77, 76, 76, 75, 75,
             74, 74, 73, 73, 73, 72, 72, 71, 71, 71, 70, 70, 69,

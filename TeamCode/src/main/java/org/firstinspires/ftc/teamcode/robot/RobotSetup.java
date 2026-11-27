@@ -187,6 +187,9 @@ public class RobotSetup extends LinearOpMode {
     private long dipMinMs = 0;
     private Long dipRecoverMs = null;
     private boolean dipRecoverWatch = false;
+    private int dipPos = 0;
+    private long dipLastMs = 0;
+    private double dipRate = 0, dipNoiseDrop = 0, dipBallDrop = 0;
     public static double DIP_RECOVER_FRAC = 0.98;     // "back up" means within 2%
     public static long DIP_RECOVER_TIMEOUT_MS = 5000;
     public static long DIP_CAPTURE_MS = 2500;
@@ -246,7 +249,7 @@ public class RobotSetup extends LinearOpMode {
 
     private Pose csPose() {
         if (csPreset < 3) {
-            // the match poses -- pollen turret 0.00, so calibration happens
+            // Pollen barrel in line with the cell: turret 0.00.
             ShooterAdapter.Target t = csTarget();
             return new Pose(csShooter().goalX(t) - ShooterRed.AXIS_LAT,
                             csShooter().goalY(t) - CS_BACK_IN[csPreset],
@@ -487,12 +490,15 @@ public class RobotSetup extends LinearOpMode {
                         () -> dipNectar ? 1 : 0, v -> dipNectar = v >= 0.5),
                 new Knob("-", "dip test rpm", "%.0f rpm", 250, 25, 0, 6500,
                         () -> dipRpm, v -> dipRpm = v),
-                new Knob("MechController", "DIP_ENTER", "%.4f", 0.005, 0.001, 0.80, 1.0,
-                        () -> MechController.DIP_ENTER,
-                        v -> MechController.DIP_ENTER = v),
-                new Knob("MechController", "DIP_EXIT", "%.4f", 0.005, 0.001, 0.80, 1.0,
-                        () -> MechController.DIP_EXIT,
-                        v -> MechController.DIP_EXIT = v),
+                new Knob("MechController", "DIP_DROP_POLLEN", "%.0f", 10, 2, 0, 800,
+                        () -> MechController.DIP_DROP_POLLEN,
+                        v -> MechController.DIP_DROP_POLLEN = v),
+                new Knob("MechController", "DIP_DROP_NECTAR", "%.0f", 10, 2, 0, 800,
+                        () -> MechController.DIP_DROP_NECTAR,
+                        v -> MechController.DIP_DROP_NECTAR = v),
+                new Knob("MechController", "DIP_REFRACTORY_MS", "%.0f ms", 25, 5, 0, 2000,
+                        () -> MechController.DIP_REFRACTORY_MS,
+                        v -> MechController.DIP_REFRACTORY_MS = (long) v),
             };
             case TURRET: return new Knob[] {
                 new Knob("TurretController", "HOME_OFFSET_DEG", "%.1f deg", 5.0, 1.0, -190, 190,
@@ -1122,6 +1128,9 @@ public class RobotSetup extends LinearOpMode {
                 dipMeasured = null;
                 dipCapture = true;
                 dipCaptureMs = System.currentTimeMillis();
+                dipPos = dipMotor().getCurrentPosition();
+                dipLastMs = dipCaptureMs;
+                dipBallDrop = 0;
                 dipChain = true;
                 robot.conveyorMot.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
                 robot.conveyorMot.setPower(1.0);
@@ -1291,23 +1300,38 @@ public class RobotSetup extends LinearOpMode {
                         DIP_RECOVER_FRAC * 100, DIP_RECOVER_TIMEOUT_MS, v, dipBaseline);
             }
         }
+        // Same test the detector runs: the drop from one sample to the next.
+        // While idle it fills the NOISE figure, during a capture the BALL one.
+        if (dipSpinning && step == Step.DIP) {
+            long nowMs = System.currentTimeMillis();
+            int pos = dipMotor().getCurrentPosition();
+            double dt = (nowMs - dipLastMs) / 1000.0;
+            dipLastMs = nowMs;
+            if (dt > 0 && dt <= MechController.DIP_MAX_DT_S) {
+                double actual = Math.abs(pos - dipPos) / dt;
+                if (dipRate > 0) {
+                    double drop = dipRate - actual;
+                    if (dipCapture) { if (drop > dipBallDrop) dipBallDrop = drop; }
+                    else            { if (drop > dipNoiseDrop) dipNoiseDrop = drop; }
+                }
+                dipRate = actual;
+            }
+            dipPos = pos;
+        }
         if (dipCapture) {
+            long nowMs = System.currentTimeMillis();
             double v = dipMotor().getVelocity();
-            if (v < dipMinSeen) { dipMinSeen = v; dipMinMs = System.currentTimeMillis(); }
-            if (System.currentTimeMillis() - dipCaptureMs > DIP_CAPTURE_MS) {
+            if (v < dipMinSeen) { dipMinSeen = v; dipMinMs = nowMs; }
+            if (nowMs - dipCaptureMs > DIP_CAPTURE_MS) {
                 dipCapture = false;
                 dipMeasured = dipBaseline - dipMinSeen;
                 dipRecoverMs = null;
                 dipRecoverWatch = true;
-                double trip = RobotHardware.rpmToTicksPerSec(dipRpm)
-                        * (1.0 - MechController.DIP_ENTER);
                 note = String.format(Locale.US,
-                        "BALL COST %.0f ticks/s (%.1f%% of target). Trip is %.0f. %s",
-                        dipMeasured,
-                        100.0 * dipMeasured / Math.max(1, RobotHardware.rpmToTicksPerSec(dipRpm)),
-                        trip,
-                        dipMeasured > trip ? "Bigger than the trip -- detectable."
-                                           : "SMALLER than the trip -- a real ball would be missed.");
+                        "%s: ball drop %.0f, noise drop %.0f. Set DIP_DROP_%s %.0f.",
+                        dipNectar ? "NECTAR" : "POLLEN", dipBallDrop, dipNoiseDrop,
+                        dipNectar ? "NECTAR" : "POLLEN",
+                        0.5 * (dipBallDrop + dipNoiseDrop));
             }
         }
         if (dipSpinning || openLoop || step == Step.SHOOTER) {
@@ -2014,23 +2038,14 @@ public class RobotSetup extends LinearOpMode {
             case DIP: {
                 double tps = dipMotor().getVelocity();
                 double target = RobotHardware.rpmToTicksPerSec(dipRpm);
-                double trip = target * (1.0 - MechController.DIP_ENTER);
-                double ball = (dipMeasured != null) ? dipMeasured : target * 0.031;
                 double spread = (vMax >= vMin) ? (vMax - vMin) : 0;
                 telemetry.addData(dipNectar ? "nectar" : "pollen",
                         "%.0f ticks/s  of  %.0f", tps, target);
                 telemetry.addData("spread (2.5s)", "%.0f   [%.0f .. %.0f]", spread, vMin, vMax);
-                telemetry.addData("trip / ball", "%.0f / %.0f ticks/s   (%s)",
-                        trip, ball, dipMeasured != null ? "ball MEASURED" : "ball estimated 3.1%");
-                telemetry.addLine(spread >= trip
-                        ? "!! spread >= trip: NOISE WILL COUNT AS BALLS"
-                        : (trip >= ball
-                            ? "!! trip >= ball: a real ball will be MISSED"
-                            : "usable: spread < trip < ball"));
                 telemetry.addLine("");
                 if (dipCapture) {
-                    telemetry.addData("MEASURING", "baseline %.0f   low so far %.0f",
-                            dipBaseline, dipMinSeen);
+                    telemetry.addData("MEASURING", "low %.0f of %.0f   drop %.0f",
+                            dipMinSeen, dipBaseline, dipBallDrop);
                 } else if (dipRecoverWatch) {
                     telemetry.addData("RECOVERING", "%.0f of %.0f, need %.0f",
                             dipMotor().getVelocity(), dipBaseline,
@@ -2038,18 +2053,13 @@ public class RobotSetup extends LinearOpMode {
                 } else if (dipMeasured != null) {
                     telemetry.addData("ball measured", "%.0f ticks/s  (%.1f%% of target)",
                             dipMeasured, 100.0 * dipMeasured / Math.max(1, target));
-                    // Put the trip halfway between the noise and the ball, so
-                    // both have the same margin, and read it back as the two
-                    // constants the detector actually uses.
-                    if (dipMeasured > spread) {
-                        double wantTrip = 0.5 * (spread + dipMeasured);
-                        double enter = 1.0 - wantTrip / Math.max(1, target);
-                        double exit  = 1.0 - 0.5 * wantTrip / Math.max(1, target);
-                        telemetry.addData("SET", "DIP_ENTER %.4f   DIP_EXIT %.4f", enter, exit);
-                        telemetry.addData("margin", "noise %.0f  trip %.0f  ball %.0f ticks/s",
-                                spread, wantTrip, dipMeasured);
-                    } else {
-                        telemetry.addLine("!! ball is not bigger than the noise -- dip cannot work");
+                    double nowDrop = dipNectar ? MechController.DIP_DROP_NECTAR
+                                               : MechController.DIP_DROP_POLLEN;
+                    telemetry.addData("DROP", "ball %.0f   noise %.0f   -> set DIP_DROP_%s %.0f   (now %.0f)",
+                            dipBallDrop, dipNoiseDrop, dipNectar ? "NECTAR" : "POLLEN",
+                            0.5 * (dipBallDrop + dipNoiseDrop), nowDrop);
+                    if (dipBallDrop <= dipNoiseDrop) {
+                        telemetry.addLine("!! ball drop is not above the noise drop");
                     }
                     if (dipRecoverMs != null) {
                         telemetry.addData("recovered in", "%d ms   vs SHOOTER_RECOVER_MS %d",

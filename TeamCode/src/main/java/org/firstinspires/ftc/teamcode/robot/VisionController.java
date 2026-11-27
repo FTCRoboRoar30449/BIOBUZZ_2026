@@ -20,7 +20,9 @@ public class VisionController {
     private VisionPortal visionPortal;
     private BallDetector ballDetector;
 
-    public static double DISTANCE_BALL_MM = 20.0;
+    // Seen when CLOSER than this. Must clear the empty-tunnel reading.
+
+    public static double DISTANCE_BALL_MM = 31.0;
 
     public static int REQUIRED_STABLE_FRAMES = 4;
     public static int LOST_FRAMES_TO_CLEAR = 10;
@@ -241,10 +243,43 @@ public class VisionController {
                 || sensorR.getDistance(DistanceUnit.MM) < DISTANCE_BALL_MM;
     }
 
+    // I2C, so not bulk cached: one distance and one RGB per sensor.
+
+    // Open ramp, nothing near it, so the gate is long on purpose: a wider
+    // window is more loops to catch the ball in. MIN_LEVEL is off until the
+    // empty ramp is seen to false-trigger; SENSE shows the level to set it.
+    public static double DISTANCE_INTAKE_MM = 75.0;
+    public static int MIN_LEVEL = 0;
+
+    private double distL = 999, distR = 999;
+    private int colL = 0, colR = 0, lvlL = 0, lvlR = 0;
+    private double minSeenL = 999, minSeenR = 999;
+    private final float[] hsvL = new float[3], hsvR = new float[3];
+
     public int ballColor(RevColorSensorV3 sensorL, RevColorSensorV3 sensorR) {
-        return combineColors(readColor(sensorL), readColor(sensorR),
-                             sensorL.getDistance(DistanceUnit.MM),
-                             sensorR.getDistance(DistanceUnit.MM));
+        distL = sensorL.getDistance(DistanceUnit.MM);
+        distR = sensorR.getDistance(DistanceUnit.MM);
+        colL = readColorAt(sensorL, distL, hsvL, true);
+        colR = readColorAt(sensorR, distR, hsvR, false);
+        if (distL < minSeenL) minSeenL = distL;
+        if (distR < minSeenR) minSeenR = distR;
+        return combineColors(colL, colR, distL, distR);
+    }
+
+    public void resetIntakeMin() { minSeenL = 999; minSeenR = 999; }
+
+    public String intakeRaw() {
+        return String.format(java.util.Locale.US, "L %s | R %s  near %.0f/%.0f  gate %.0fmm lvl %.0f",
+                one(distL, hsvL, colL, lvlL), one(distR, hsvR, colR, lvlR),
+                minSeenL, minSeenR, DISTANCE_INTAKE_MM, (double) MIN_LEVEL);
+    }
+
+    private String one(double d, float[] hsv, int c, int lvl) {
+        if (d >= DISTANCE_INTAKE_MM) {
+            return String.format(java.util.Locale.US, "%.0fmm FAR", d);
+        }
+        return String.format(java.util.Locale.US, "%.0fmm L%d h%.0f s%.2f %s",
+                d, lvl, hsv[0], hsv[1], c == 0 ? "NO MATCH" : ("c" + c));
     }
 
     private int combineColors(int left, int right, double distL, double distR) {
@@ -254,15 +289,18 @@ public class VisionController {
         return distL <= distR ? left : right;
     }
 
-    private int readColor(RevColorSensorV3 sensor) {
-        if (sensor.getDistance(DistanceUnit.MM) >= DISTANCE_BALL_MM) return 0;
+    private int readColorAt(RevColorSensorV3 sensor, double distMm, float[] hsv, boolean isLeft) {
+        hsv[0] = -1; hsv[1] = 0; hsv[2] = 0;
+        if (isLeft) lvlL = 0; else lvlR = 0;
+        if (distMm >= DISTANCE_INTAKE_MM) return 0;
         int r = sensor.red(), g = sensor.green(), b = sensor.blue();
+        int level = r + g + b;
+        if (isLeft) lvlL = level; else lvlR = level;
         int max = Math.max(r, Math.max(g, b));
         if (max == 0) return 0;
-        float[] hsv = new float[3];
         Color.RGBToHSV(r * 255 / max, g * 255 / max, b * 255 / max, hsv);
-        float h = hsv[0], s = hsv[1], v = hsv[2];
-        return classify(h, s, v);
+        int c = classify(hsv[0], hsv[1], hsv[2]);
+        return (c != 0 && level >= MIN_LEVEL) ? c : 0;
     }
 
     public static int classify(float h, float s, float v) {

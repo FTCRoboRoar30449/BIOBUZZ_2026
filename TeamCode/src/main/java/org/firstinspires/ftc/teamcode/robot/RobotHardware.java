@@ -50,7 +50,7 @@ public class RobotHardware {
     public final WebcamName camera;
     public final Limelight3A limeLight;
 
-    // Belt-forward direction. ShooterCalibration reads it: under setPower the
+    // Belt-forward direction.
     public static final DcMotor.Direction CONVEYOR_DIR = DcMotor.Direction.REVERSE;
 
     public static final double SHOOTER_TICKS_PER_REV = 28.0;
@@ -68,7 +68,7 @@ public class RobotHardware {
 
     // two balls grip differently, so they do not share a value.
     public static double SHOOTER_EFF_NECTAR = 0.432;
-    // RE-MEASURED 22 Nov, streaming. Step 29 calibration fires ONE ball on a
+    // Streaming value; step 29 hand-feeds one ball and reads higher.
     public static double SHOOTER_EFF_POLLEN = 0.435;
 
     public static double shooterEfficiency(boolean nectar) {
@@ -93,7 +93,6 @@ public class RobotHardware {
 
     public static final double FLOWER_COLLECT_IN = 14.535;  // 369.193 mm
 
-    // calibration distances.
     public static final double BUMPER_FWD_IN = 8.786;       // 223.175 mm
 
     public final Position cameraPosition =
@@ -134,10 +133,8 @@ public class RobotHardware {
         camera = hwMap.get(WebcamName.class, "Webcam 1");                        // USB 2
         limeLight = hwMap.get(Limelight3A.class, "limeLight");                   // USB 3
 
-        // Without this every getVelocity, every encoder and every colour
-        // sensor read is its own round trip to the hub, a few ms each. The
-        // loop was long enough that a flywheel dip or a ball passing the
-        // intake sensor could fall between two samples entirely.
+        // Without this every encoder read is its own round trip to the hub.
+
         for (LynxModule hub : hwMap.getAll(LynxModule.class)) {
             hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
         }

@@ -197,10 +197,8 @@ public class TurretController {
         zeroEncoderHere();
     }
 
-    // Trust the stored SERVO_AT_ZERO instead of searching for the magnet.
-    // Match code uses this: the turret goes to 0 and is treated as homed, so
-    // nothing in a match can move the zero. Only RobotSetup still homes, and
-    // only RobotSetup writes SERVO_AT_ZERO.
+    // Match code: trust the stored zero. Only RobotSetup writes it.
+
     public void assumeHomed() {
         homeState = HomeState.HOMED;
         phaseStartMs = System.currentTimeMillis();
