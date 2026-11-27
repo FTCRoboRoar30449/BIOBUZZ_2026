@@ -196,7 +196,6 @@ public class MechController {
         rawPosP = robot.pollenShootingMot.getCurrentPosition();
         rawPosN = robot.nectarShootingMot.getCurrentPosition();
         rawPosMs = nowMs;
-        rawConvPos = robot.conveyorMot.getCurrentPosition();
 
         turret.update();
 
@@ -287,7 +286,7 @@ public class MechController {
         pollenExits = 0; nectarExits = 0;
         pollenExitsAtArm = 0; nectarExitsAtArm = 0;
         pollenDipLow = true; nectarDipLow = true;
-        rateP = 0; rateN = 0; histNP = 0; histNN = 0;
+        rateP = 0; rateN = 0; histNP = 0; histNN = 0; pendP = false; pendN = false;
         pollenDepth = 0; nectarDepth = 0;
         lastDipMs = 0;
         resetIntakeDebounce();
@@ -661,10 +660,15 @@ public class MechController {
     public static double DIP_DROP_POLLEN = 150;
     public static double DIP_DROP_NECTAR = 120;
     public static long DIP_REFRACTORY_MS = 250;
+    // How much of the drop must still be there on the next sample. Raise to
+    // reject drops that rebound; lower if real balls go uncounted.
+    public static double DIP_CONFIRM_FRAC = 0.50;
     // The conveyor starting pulls the bus down and both wheels sag with it.
     public static long DIP_START_IGNORE_MS = 250;
-    // One ball needs about 400 ticks of belt. Below this it is not a ball.
-    public static int DIP_MIN_TRAVEL_TICKS = 250;
+    // The belt halts on every ball and restarts, surging the bus each time.
+    // Shorter than the start window: a ball can reach the wheel soon after.
+    public static long DIP_RESUME_IGNORE_MS = 120;
+
     public static double DIP_MAX_DT_S = 0.25;
 
     private int posP = 0, posN = 0;
@@ -674,7 +678,6 @@ public class MechController {
     private long lastDipMs = 0;
     private int rawPosP = 0, rawPosN = 0;
     private long rawPosMs = 0;
-    private int rawConvPos = 0;
 
     private void serviceExitDetect() {
         double dt = (rawPosMs - lastDipMs) / 1000.0;
@@ -689,6 +692,7 @@ public class MechController {
             posP = pp; posN = pn;
             pollenDepth = 0; nectarDepth = 0;
             rateP = 0; rateN = 0; histNP = 0; histNN = 0;
+            pendP = false; pendN = false;
             return;
         }
         pollenDipLow = detectDip(true,  pp, dt, dipArmP ? targetPollenTps : 0);
@@ -701,11 +705,12 @@ public class MechController {
         if (pollen) posP = pos; else posN = pos;
 
         if (target <= 0) {
-            if (pollen) { rateP = 0; histNP = 0; pollenDepth = 0; }
-            else        { rateN = 0; histNN = 0; nectarDepth = 0; }
+            if (pollen) { rateP = 0; histNP = 0; pendP = false; pollenDepth = 0; }
+            else        { rateN = 0; histNN = 0; pendN = false; nectarDepth = 0; }
             return true;
         }
         double actual = moved / dt;
+        if (pollen) rateP = actual; else rateN = actual;
         double[] h = pollen ? histP : histN;
         int n = pollen ? histNP : histNN;
         if (n < 3) {
@@ -722,20 +727,28 @@ public class MechController {
 
         long now = System.currentTimeMillis();
         long since = now - (pollen ? lastCountP : lastCountN);
+        double thr = pollen ? DIP_DROP_POLLEN : DIP_DROP_NECTAR;
         boolean fired = false;
-        // Belt travel can VETO a count, never create one: balls cannot arrive
-        // closer together than the belt can deliver them, so a burst of
-        // noise inside one ball's worth of travel is not four balls.
-        int travel = Math.abs(rawConvPos - (pollen ? lastCountTicksP : lastCountTicksN));
-        if (drop > (pollen ? DIP_DROP_POLLEN : DIP_DROP_NECTAR)
+
+        // A low sample alone cannot tell a ball from a mis-timed interval.
+        // Ticks are never lost to measurement, so jitter hands them back on
+        // the next sample and the two average out; a ball does not. Hold the
+        // drop one loop and judge the pair.
+        if (pollen ? pendP : pendN) {
+            double ref = pollen ? pendRefP : pendRefN;
+            double low = pollen ? pendLowP : pendLowN;
+            if (pollen) pendP = false; else pendN = false;
+            if (ref - 0.5 * (low + actual) > DIP_CONFIRM_FRAC * thr) {
+                fired = true;
+                if (pollen) { pollenExits++; pollenExitsTotal++; lastCountP = now; }
+                else        { nectarExits++; nectarExitsTotal++; lastCountN = now; }
+            }
+        } else if (drop > thr
                 && since > DIP_REFRACTORY_MS
                 && now - flowStartMs > DIP_START_IGNORE_MS
-                && travel >= DIP_MIN_TRAVEL_TICKS) {
-            fired = true;
-            if (pollen) { pollenExits++; pollenExitsTotal++; lastCountP = now;
-                          lastCountTicksP = rawConvPos; }
-            else        { nectarExits++; nectarExitsTotal++; lastCountN = now;
-                          lastCountTicksN = rawConvPos; }
+                && now - beltResumeMs > DIP_RESUME_IGNORE_MS) {
+            if (pollen) { pendP = true; pendRefP = prev; pendLowP = actual; }
+            else        { pendN = true; pendRefN = prev; pendLowN = actual; }
         }
         if (pollen) {
             pollenDepth = drop;
@@ -750,7 +763,8 @@ public class MechController {
     }
 
     private long lastCountP = 0, lastCountN = 0;
-    private int lastCountTicksP = 0, lastCountTicksN = 0;
+    private boolean pendP = false, pendN = false;
+    private double pendRefP = 0, pendRefN = 0, pendLowP = 0, pendLowN = 0;
 
     // Survives the state change, so the evidence is still there afterwards.
     private double pollenDepth = 0, nectarDepth = 0;
@@ -877,9 +891,9 @@ public class MechController {
                 flowAnchorTicks = robot.conveyorMot.getCurrentPosition();
                 flowAnchorValid = true;
                 flowStartMs = System.currentTimeMillis();
-                lastCountTicksP = rawConvPos; lastCountTicksN = rawConvPos;
-
             }
+            // Every restart is a current surge, not just the volley's first.
+            if (!flowing) beltResumeMs = System.currentTimeMillis();
             flowing = true;
             robot.conveyorMot.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             robot.conveyorMot.setPower(CONVEYOR_POWER);
@@ -902,6 +916,7 @@ public class MechController {
     private boolean flowAnchorValid = false;
 
     private long flowStartMs = 0;
+    private long beltResumeMs = 0;
     private boolean dipArmP = false, dipArmN = false;
 
     private void countFlowByBeltTravel(boolean hive) {
